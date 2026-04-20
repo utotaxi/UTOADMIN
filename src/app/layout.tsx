@@ -10,6 +10,10 @@ export const metadata: Metadata = {
   description: "Admin panel for UTO Ride Sharing Application in the UK.",
 };
 
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({
   children,
 }: Readonly<{
