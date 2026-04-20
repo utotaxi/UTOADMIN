@@ -1,0 +1,208 @@
+'use server';
+
+import { supabaseAdmin } from "@/lib/supabase";
+import { shouldGoToMarketplace, assignNearestDriver } from "@/lib/dsa";
+
+/**
+ * Convert a YYYY-MM-DDTHH:mm local string (meant to represent UK time) 
+ * into a proper UTC ISO string, regardless of where the server or browser is.
+ */
+function parseUKTime(datetimeLocalValue: string | null): string | null {
+  if (!datetimeLocalValue) return null;
+  
+  const d = new Date(datetimeLocalValue + "Z");
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/London',
+    year: 'numeric', month: 'numeric', day: 'numeric',
+    hour: 'numeric', minute: 'numeric', second: 'numeric',
+    hour12: false
+  });
+  
+  const parts = formatter.formatToParts(d);
+  const p: Record<string, number> = {};
+  parts.forEach(({ type, value }) => {
+    if (type !== 'literal') p[type] = parseInt(value, 10);
+  });
+  
+  // If hour is 24, fix it to 0
+  if (p.hour === 24) p.hour = 0;
+  
+  const londonAsUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second || 0);
+  const offsetMins = Math.round((londonAsUtc - d.getTime()) / 60000);
+  
+  const realUtcTime = d.getTime() - (offsetMins * 60000);
+  return new Date(realUtcTime).toISOString();
+}
+
+/**
+ * Geocode an address to lat/lon using Nominatim (OpenStreetMap).
+ * Falls back to UK-general placeholder coordinates if geocoding fails.
+ */
+async function geocodeAddress(address: string): Promise<{ lat: number; lon: number }> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&countrycodes=gb`,
+      { headers: { 'User-Agent': 'UTO-Admin-Panel/1.0' } }
+    );
+    const data = await res.json();
+    if (data && data.length > 0) {
+      return {
+        lat: parseFloat(data[0].lat),
+        lon: parseFloat(data[0].lon),
+      };
+    }
+  } catch (err) {
+    console.error("[Geocode] Failed for address:", address, err);
+  }
+  // Fallback to London centre as placeholder
+  return { lat: 51.5074, lon: -0.1278 };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function createWebBooking(data: any) {
+  try {
+    // 1. Check if user exists by phone or email
+    let riderId = null;
+
+    const { data: existingUser } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .or(`phone.eq.${data.phone},email.eq.${data.email}`)
+      .single();
+
+    if (existingUser) {
+      riderId = existingUser.id;
+    } else {
+      // Create user
+      const { data: newUser, error: createUserError } = await supabaseAdmin.auth.admin.createUser({
+        email: data.email || `${data.phone}@temp.uto.com`,
+        password: "TempPassword123!",
+        email_confirm: true,
+      });
+
+      if (createUserError) throw new Error("Failed to create rider auth: " + createUserError.message);
+
+      riderId = newUser.user.id;
+      
+      // Update or create users table record
+      await supabaseAdmin.from('users').upsert({
+        id: riderId,
+        email: data.email || `${data.phone}@temp.uto.com`,
+        full_name: `${data.firstName} ${data.lastName}`.trim(),
+        phone: data.phone,
+        role: 'rider',
+      });
+    }
+
+    // 2. Geocode the pickup and dropoff addresses for accurate DSA
+    const [pickupGeo, dropoffGeo] = await Promise.all([
+      geocodeAddress(data.pickupAddress),
+      geocodeAddress(data.dropoffAddress),
+    ]);
+
+    // 3. Determine dispatch mode: marketplace or direct driver assignment
+    const scheduledTime = parseUKTime(data.time);
+    const goToMarketplace = await shouldGoToMarketplace(scheduledTime);
+
+    // 4. Generate Reference & Insert into web_booker table
+    const reference = Math.random().toString(36).substring(2, 8).toUpperCase();
+    
+    const initialStatus = goToMarketplace ? 'marketplace' : 'searching_driver';
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bookingData: Record<string, any> = {
+      reference,
+      rider_id: riderId,
+      status: initialStatus,
+      vehicle_type: data.vehicleType || 'economy',
+      pickup_address: data.pickupAddress,
+      pickup_latitude: pickupGeo.lat,
+      pickup_longitude: pickupGeo.lon,
+      dropoff_address: data.dropoffAddress,
+      dropoff_latitude: dropoffGeo.lat,
+      dropoff_longitude: dropoffGeo.lon,
+      estimated_price: data.price || 0,
+      scheduled_time: scheduledTime || null,
+      pricing_type: data.pricingType || "Fixed price",
+      payment_method: data.paymentMethod || "pay",
+      commission_calculation: data.commissionCalculation || "Calculate automatically",
+      commission_amount: data.commission || 0,
+      driver_cut: data.driverCut || 0,
+      flight_number: data.flightNumber || null,
+      booking_note: data.bookingNote || null,
+      dispatch_mode: goToMarketplace ? 'marketplace' : 'dsa_direct',
+      dispatch_note: goToMarketplace 
+        ? 'Booking is 4+ hours away. Placed in marketplace for drivers to accept.' 
+        : 'Booking within 4 hours. Searching for nearest available driver...',
+    };
+
+    const { data: newBooking, error: bookingError } = await supabaseAdmin
+      .from('web_booker')
+      .insert(bookingData)
+      .select()
+      .single();
+
+    if (bookingError) throw new Error("Failed to create web booking: " + bookingError.message);
+
+    // 5. If NOT marketplace → run DSA to find and assign nearest driver
+    let assignedDriver = null;
+    if (!goToMarketplace) {
+      assignedDriver = await assignNearestDriver(
+        newBooking.id,
+        pickupGeo.lat,
+        pickupGeo.lon,
+        'web_booker'
+      );
+    }
+
+    // 6. Re-fetch the booking to get the latest status after DSA assignment
+    const { data: finalBooking } = await supabaseAdmin
+      .from('web_booker')
+      .select()
+      .eq('id', newBooking.id)
+      .single();
+
+    // 7. CROSS-POST to the central utoreplit Express Server API
+    // This allows the actual rider/driver app to natively pick up this trip,
+    // dispatching via real sockets if < 4h, or dropping it in later_bookings if > 4h.
+    try {
+      const expressPayload = {
+        riderId,
+        pickupAddress: data.pickupAddress,
+        pickupLatitude: pickupGeo.lat,
+        pickupLongitude: pickupGeo.lon,
+        dropoffAddress: data.dropoffAddress,
+        dropoffLatitude: dropoffGeo.lat,
+        dropoffLongitude: dropoffGeo.lon,
+        pickupAt: scheduledTime || new Date(Date.now() + 60000).toISOString(), // Fallback to +1 minute to bypass future validation
+        dropoffBy: new Date(new Date(scheduledTime || Date.now()).getTime() + 30 * 60000).toISOString(),
+        estimatedPrice: data.price || 0,
+        vehicleType: data.vehicleType || 'economy'
+      };
+      
+      await fetch("http://localhost:5000/api/later-bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(expressPayload)
+      });
+      console.log("[WebBooker] Cross-posted payload to main Express API");
+    } catch (apiErr) {
+      console.error("[WebBooker] Failed to notify main Express API", apiErr);
+    }
+
+    return { 
+      success: true, 
+      ride: finalBooking || newBooking,
+      dispatchMode: goToMarketplace ? 'marketplace' : 'dsa_direct',
+      assignedDriver: assignedDriver ? {
+        name: assignedDriver.driver_name,
+        distance_miles: assignedDriver.distance_miles,
+        vehicle: `${assignedDriver.vehicle_make} ${assignedDriver.vehicle_model}`,
+        plate: assignedDriver.license_plate,
+      } : null,
+    };
+  } catch (error: unknown) {
+    console.error("Error creating web booking:", error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
