@@ -15,6 +15,7 @@ import { format } from "date-fns";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DriverIncomePanel, type Deduction } from "./DriverIncomePanel";
+import DriverApprovalButton from "./DriverApprovalButton";
 
 export const dynamic = "force-dynamic";
 
@@ -168,9 +169,11 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
                             >
                                 <FileCheck className="w-4 h-4" /> Documents
                             </Link>
-                            <button className="flex-none p-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors">
-                                <Ban className="w-4 h-4" />
-                            </button>
+                            <DriverApprovalButton 
+                                userId={driver.user_id} 
+                                driverId={driverId} 
+                                isVerified={driver.user?.is_verified || false} 
+                            />
                         </div>
                     </div>
                 </div>

@@ -49,3 +49,20 @@ export async function deleteDeduction(driverId: string, deductionId: string) {
     revalidatePath(`/drivers/${driverId}`);
     return { success: true };
 }
+
+export async function toggleDriverApproval(userId: string, isVerified: boolean, driverId: string) {
+    const { error } = await supabaseAdmin
+        .from('users')
+        .update({ is_verified: isVerified })
+        .eq('id', userId);
+
+    if (error) {
+        console.error("Error toggling verification:", error);
+        return { error: error.message };
+    }
+
+    revalidatePath(`/drivers/${driverId}`);
+    revalidatePath(`/drivers`);
+    return { success: true };
+}
+

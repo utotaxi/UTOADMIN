@@ -40,24 +40,29 @@ export default async function DriverDocumentsPage({
     // 3. Fetch documents ONLY for the selected driver
     let documents: any[] = [];
     if (selectedEmail) {
+        const folderName = selectedEmail.replace(/[^a-zA-Z0-9@._-]/g, '_');
         const { data: docs, error: docsError } = await supabaseAdmin
             .storage
             .from('driver_documents')
-            .list(selectedEmail);
+            .list(folderName);
 
         if (!docsError && docs) {
             documents = await Promise.all(docs.filter(f => f.name !== '.emptyFolderPlaceholder').map(async (file) => {
                 const { data } = await supabaseAdmin.storage
                     .from('driver_documents')
-                    .createSignedUrl(`${selectedEmail}/${file.name}`, 60 * 60 * 24);
+                    .createSignedUrl(`${folderName}/${file.name}`, 60 * 60 * 24, { download: file.name });
 
                 let docType = 'Other Document';
                 if (file.name.includes('BankStatement')) docType = 'Bank Statement';
                 if (file.name.includes('DvlaLicence')) docType = 'DVLA Licence';
-                if (file.name.includes('Insurance')) docType = 'Vehicle Insurance';
+                if (file.name.includes('NationalInsurance')) docType = 'National Insurance';
+                if (file.name.includes('Phdl')) docType = 'Private Hire Driver Licence (PHDL)';
+                if (file.name.includes('ProfilePhoto')) docType = 'Profile Photo';
+                if (file.name.includes('Phvl')) docType = 'Private Hire Vehicle Licence (PHVL)';
                 if (file.name.includes('Logbook')) docType = 'Logbook (V5C)';
+                if (file.name.includes('Insurance') && !file.name.includes('NationalInsurance')) docType = 'Vehicle Insurance';
+                if (file.name.includes('Inspection') || file.name.includes('Mot')) docType = 'MOT / Vehicle Inspection';
                 if (file.name.includes('PcoBadge')) docType = 'PCO Badge';
-                if (file.name.includes('Mot')) docType = 'MOT Certificate';
 
                 return {
                     name: file.name,
@@ -163,7 +168,7 @@ export default async function DriverDocumentsPage({
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                                         {documents.map((doc: any, i: number) => (
                                             <div key={i} className="group relative flex flex-col rounded-xl border bg-background overflow-hidden hover:shadow-lg transition-all duration-300 hover:border-primary/50">
-                                                <a href={doc.url} target="_blank" rel="noopener noreferrer" className="absolute inset-0 z-10" aria-label={`View ${doc.type}`} />
+                                                <a href={doc.url} target="_blank" rel="noopener noreferrer" download={doc.name} className="absolute inset-0 z-10" aria-label={`View ${doc.type}`} />
                                                 
                                                 <div className="flex items-center gap-3 p-3.5 border-b bg-slate-50/50 dark:bg-slate-800/20">
                                                     <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">
