@@ -18,6 +18,7 @@ export default async function UsersPage({
     let query = supabaseAdmin
         .from('users')
         .select('*')
+        .eq('role', 'rider')
         .order('created_at', { ascending: false });
 
     if (search) {
@@ -33,8 +34,8 @@ export default async function UsersPage({
         <div className="flex flex-col gap-8 w-full">
             <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="flex flex-col gap-2">
-                    <h1 className="text-3xl font-bold tracking-tight text-foreground">Users Management</h1>
-                    <p className="text-muted-foreground">View and manage all registered platform users.</p>
+                    <h1 className="text-3xl font-bold tracking-tight text-foreground">Riders</h1>
+                    <p className="text-muted-foreground">View and manage all registered riders.</p>
                 </div>
                 <UsersSearch />
             </div>
@@ -44,8 +45,7 @@ export default async function UsersPage({
                     <table className="w-full text-sm text-left">
                         <thead className="text-xs text-muted-foreground uppercase bg-slate-50/50 dark:bg-slate-900/50 border-b">
                             <tr>
-                                <th scope="col" className="px-6 py-4 font-medium">User</th>
-                                <th scope="col" className="px-6 py-4 font-medium">Role</th>
+                                <th scope="col" className="px-6 py-4 font-medium">Rider</th>
                                 <th scope="col" className="px-6 py-4 font-medium">Status</th>
                                 <th scope="col" className="px-6 py-4 font-medium">Rides</th>
                                 <th scope="col" className="px-6 py-4 font-medium">Joined</th>
@@ -74,11 +74,7 @@ export default async function UsersPage({
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4">
-                                            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize bg-primary/10 text-primary">
-                                                {user.role}
-                                            </span>
-                                        </td>
+
                                         <td className="px-6 py-4">
                                             {user.is_verified ? (
                                                 <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xs font-medium">
@@ -105,7 +101,7 @@ export default async function UsersPage({
                                 ))
                             ) : (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
+                                    <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
                                         <div className="flex flex-col items-center justify-center gap-2">
                                             <UserX className="w-8 h-8 opacity-50" />
                                             <p>No users found</p>

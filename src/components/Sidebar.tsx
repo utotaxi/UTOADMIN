@@ -23,7 +23,7 @@ const links = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
     { name: 'Drivers', href: '/drivers', icon: Car },
     { name: 'Driver Docs', href: '/driver-documents', icon: FileText },
-    { name: 'Users', href: '/users', icon: Users },
+    { name: 'Riders', href: '/users', icon: Users },
     { name: 'Live Map', href: '/map', icon: Map },
     { name: 'Service Areas', href: '/service-areas', icon: Layers },
     { name: 'Rides & Trips', href: '/rides', icon: ShieldAlert },

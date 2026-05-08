@@ -40,14 +40,41 @@ export default function LiveMapClient({ initialAreas, initialDrivers }: LiveMapC
   const areaLayersRef = useRef<Map<string, any>>(new Map());
 
   const [areas] = useState<ServiceArea[]>(initialAreas);
-  const [drivers] = useState(initialDrivers);
+  const [drivers, setDrivers] = useState(initialDrivers);
   const [showAreas, setShowAreas] = useState(true);
   const [showDrivers, setShowDrivers] = useState(true);
   const [showOnlineOnly, setShowOnlineOnly] = useState(true);
   const [selectedDriver, setSelectedDriver] = useState<typeof initialDrivers[0] | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const onlineDrivers = drivers.filter((d) => d.is_online);
   const availableDrivers = drivers.filter((d) => d.is_online && d.is_available);
+
+  // Fetch fresh driver data
+  const refreshDrivers = useCallback(async () => {
+    try {
+      setIsRefreshing(true);
+      const res = await fetch('/api/drivers');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.drivers) {
+          setDrivers(data.drivers);
+          setLastUpdated(new Date());
+        }
+      }
+    } catch (err) {
+      console.error('Failed to refresh drivers:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  // Auto-refresh every 15 seconds
+  useEffect(() => {
+    const interval = setInterval(refreshDrivers, 15000);
+    return () => clearInterval(interval);
+  }, [refreshDrivers]);
 
   // Create driver icon
   const createDriverIcon = useCallback((isOnline: boolean, isAvailable: boolean) => {
@@ -240,6 +267,20 @@ export default function LiveMapClient({ initialAreas, initialDrivers }: LiveMapC
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+            <Clock className="h-3.5 w-3.5 text-slate-400" />
+            <span className="text-[10px] font-medium text-muted-foreground">
+              Updated {lastUpdated.toLocaleTimeString()}
+            </span>
+          </div>
+          <button
+            onClick={refreshDrivers}
+            disabled={isRefreshing}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/20 hover:bg-primary/20 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5 text-primary', isRefreshing && 'animate-spin')} />
+            <span className="text-xs font-semibold text-primary">Refresh</span>
+          </button>
           <div className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
             <Activity className="h-3.5 w-3.5 text-emerald-500" />
             <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
