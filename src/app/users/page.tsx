@@ -30,6 +30,27 @@ export default async function UsersPage({
         console.error("Error fetching users:", error);
     }
 
+    // Fetch all rides to compute per-user ride counts dynamically
+    // This replaces the stale users.total_rides field
+    const { data: allRides } = await supabaseAdmin
+        .from('rides')
+        .select('rider_id, status');
+
+    // Build ride count map: user_id -> { total, completed }
+    const rideCountMap: Record<string, { total: number; completed: number }> = {};
+    if (allRides) {
+        for (const ride of allRides) {
+            if (!ride.rider_id) continue;
+            if (!rideCountMap[ride.rider_id]) {
+                rideCountMap[ride.rider_id] = { total: 0, completed: 0 };
+            }
+            rideCountMap[ride.rider_id].total++;
+            if (ride.status === 'completed') {
+                rideCountMap[ride.rider_id].completed++;
+            }
+        }
+    }
+
     return (
         <div className="flex flex-col gap-8 w-full">
             <div className="flex flex-wrap items-start justify-between gap-4">
@@ -54,7 +75,9 @@ export default async function UsersPage({
                         </thead>
                         <tbody className="divide-y divide-border">
                             {users && users.length > 0 ? (
-                                users.map((user) => (
+                                users.map((user) => {
+                                    const rideCounts = rideCountMap[user.id] || { total: 0, completed: 0 };
+                                    return (
                                     <tr key={user.id} className="bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                                         <td className="px-6 py-4">
                                             <div className="flex items-center gap-3">
@@ -86,8 +109,13 @@ export default async function UsersPage({
                                                 </span>
                                             )}
                                         </td>
-                                        <td className="px-6 py-4 font-medium">
-                                            {user.total_rides || 0}
+                                        <td className="px-6 py-4">
+                                            <div className="flex flex-col">
+                                                <span className="font-medium">{rideCounts.total}</span>
+                                                {rideCounts.completed > 0 && (
+                                                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{rideCounts.completed} completed</span>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-muted-foreground">
                                             {user.created_at ? format(new Date(user.created_at), 'MMM dd, yyyy') : 'Unknown'}
@@ -98,7 +126,8 @@ export default async function UsersPage({
                                             </Link>
                                         </td>
                                     </tr>
-                                ))
+                                    );
+                                })
                             ) : (
                                 <tr>
                                     <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">

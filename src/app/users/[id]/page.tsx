@@ -1,10 +1,31 @@
 import { supabaseAdmin } from "@/lib/supabase";
-import { User as UserIcon, Shield, CheckCircle2, ChevronLeft, MapPin, Clock } from "lucide-react";
+import { User as UserIcon, Shield, CheckCircle2, ChevronLeft, MapPin, Clock, CreditCard, PoundSterling } from "lucide-react";
 import { format } from "date-fns";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
 export const dynamic = "force-dynamic";
+
+// Status badge styling
+function getStatusBadge(status: string) {
+    switch (status) {
+        case 'completed':
+            return 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300';
+        case 'in_progress':
+            return 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300';
+        case 'accepted':
+        case 'arriving':
+        case 'arrived':
+            return 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300';
+        case 'cancelled':
+        case 'cancelled_no_drivers':
+            return 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300';
+        case 'pending':
+            return 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400';
+        default:
+            return 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400';
+    }
+}
 
 export default async function UserDetailsPage({ params }: { params: Promise<{ id: string }> }) {
     const resolvedParams = await params;
@@ -22,13 +43,34 @@ export default async function UserDetailsPage({ params }: { params: Promise<{ id
         return notFound();
     }
 
-    // Fetch their ride history
+    // Fetch ALL rides for this rider (not just 10) — use requested_at for ordering
     const { data: rides, error: ridesError } = await supabaseAdmin
         .from('rides')
-        .select('*, driver:driver_id(user:user_id(*))')
+        .select('*, driver:driver_id(user:user_id(full_name, phone))')
         .eq('rider_id', userId)
-        .order('requested_at', { ascending: false })
-        .limit(10); // Fetch latest 10 rides for the overview
+        .order('requested_at', { ascending: false });
+
+    if (ridesError) {
+        console.error("Error fetching rides for user:", ridesError);
+    }
+
+    // Compute actual ride counts dynamically from the rides table
+    const allRides = rides || [];
+    const totalRides = allRides.length;
+    const completedRides = allRides.filter((r: any) => r.status === 'completed').length;
+    const cancelledRides = allRides.filter((r: any) => r.status === 'cancelled' || r.status === 'cancelled_no_drivers').length;
+    const totalSpent = allRides
+        .filter((r: any) => r.status === 'completed')
+        .reduce((sum: number, r: any) => sum + (r.final_price || r.estimated_price || 0), 0);
+
+    // Fetch payments for this user too, in case rides were recorded differently
+    const { data: payments } = await supabaseAdmin
+        .from('payments')
+        .select('ride_id, amount, status, completed_at')
+        .eq('user_id', userId)
+        .eq('status', 'succeeded');
+
+    const totalPaid = (payments || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
 
     return (
         <div className="flex flex-col gap-6 w-full max-w-5xl">
@@ -86,7 +128,21 @@ export default async function UserDetailsPage({ params }: { params: Promise<{ id
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-muted-foreground">Total Rides</span>
-                                <span className="font-medium text-primary">{user.total_rides || 0}</span>
+                                <span className="font-medium text-primary">{totalRides}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Completed</span>
+                                <span className="font-medium text-emerald-600 dark:text-emerald-400">{completedRides}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Cancelled</span>
+                                <span className="font-medium text-rose-600 dark:text-rose-400">{cancelledRides}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Total Spent</span>
+                                <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                                    £{(totalSpent || totalPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </span>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-muted-foreground">Rating</span>
@@ -101,31 +157,44 @@ export default async function UserDetailsPage({ params }: { params: Promise<{ id
                 {/* History Area */}
                 <div className="md:col-span-2 flex flex-col gap-6">
                     <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6 glass flex flex-col h-full">
-                        <h3 className="font-semibold text-lg mb-4">Recent Rides</h3>
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="font-semibold text-lg">Ride History</h3>
+                            <span className="text-xs text-muted-foreground">{totalRides} total ride{totalRides !== 1 ? 's' : ''}</span>
+                        </div>
 
                         <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-4">
-                            {rides && rides.length > 0 ? (
-                                rides.map((ride: any) => (
+                            {allRides.length > 0 ? (
+                                allRides.map((ride: any) => (
                                     <div key={ride.id} className="p-4 rounded-lg border bg-slate-50/50 dark:bg-slate-900/50 flex flex-col sm:flex-row gap-4 justify-between sm:items-center">
-                                        <div className="flex flex-col flex-1 max-w-[280px]">
+                                        <div className="flex flex-col flex-1 max-w-[320px]">
                                             <span className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                                                <Clock className="w-3 h-3" /> {ride.requested_at ? format(new Date(ride.requested_at), 'MMM dd, yyyy - HH:mm') : ''}
+                                                <Clock className="w-3 h-3" /> {ride.requested_at ? format(new Date(ride.requested_at), 'MMM dd, yyyy - HH:mm') : 'Unknown date'}
                                             </span>
                                             <div className="flex items-start gap-2 text-sm mb-1.5">
                                                 <MapPin className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
-                                                <span className="truncate" title={ride.pickup_address}>{ride.pickup_address}</span>
+                                                <span className="truncate" title={ride.pickup_address}>{ride.pickup_address || 'Unknown pickup'}</span>
                                             </div>
                                             <div className="flex items-start gap-2 text-sm">
                                                 <MapPin className="w-4 h-4 text-rose-500 mt-0.5 flex-shrink-0" />
-                                                <span className="truncate" title={ride.dropoff_address}>{ride.dropoff_address}</span>
+                                                <span className="truncate" title={ride.dropoff_address}>{ride.dropoff_address || 'Unknown dropoff'}</span>
                                             </div>
+                                            {ride.driver?.user?.full_name && (
+                                                <span className="text-xs text-muted-foreground mt-2">
+                                                    Driver: {ride.driver.user.full_name}
+                                                </span>
+                                            )}
                                         </div>
 
                                         <div className="flex flex-col sm:items-end gap-1">
                                             <span className="font-bold text-lg">£{(ride.final_price || ride.estimated_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-200 dark:bg-slate-800 uppercase tracking-wider">
-                                                {ride.status}
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${getStatusBadge(ride.status)}`}>
+                                                {ride.status?.replace(/_/g, ' ')}
                                             </span>
+                                            {ride.payment_status && ride.payment_status !== 'pending' && (
+                                                <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                                                    <CreditCard className="w-3 h-3" /> {ride.payment_status}
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 ))
@@ -133,6 +202,7 @@ export default async function UserDetailsPage({ params }: { params: Promise<{ id
                                 <div className="h-full flex flex-col items-center justify-center text-muted-foreground py-12">
                                     <MapPin className="w-8 h-8 opacity-20 mb-3" />
                                     <p>No rides taken yet.</p>
+                                    <p className="text-xs mt-1 opacity-50">Rides will appear here once this rider completes a trip.</p>
                                 </div>
                             )}
                         </div>
