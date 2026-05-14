@@ -19,9 +19,20 @@ import DriverApprovalButton from "./DriverApprovalButton";
 
 export const dynamic = "force-dynamic";
 
+// Staleness threshold — same as cleanup route
+const STALE_THRESHOLD_MINUTES = 2;
+
 export default async function DriverDetailsPage({ params }: { params: Promise<{ id: string }> }) {
     const resolvedParams = await params;
     const driverId = resolvedParams.id;
+
+    // Clean up stale online statuses before rendering this driver's profile
+    const cutoff = new Date(Date.now() - STALE_THRESHOLD_MINUTES * 60 * 1000).toISOString();
+    await supabaseAdmin
+        .from('drivers')
+        .update({ is_online: false, is_available: false })
+        .eq('is_online', true)
+        .lt('last_seen_at', cutoff);
 
     // Fetch driver info along with user info
     const { data: driver, error: driverError } = await supabaseAdmin
