@@ -6,8 +6,36 @@ export const dynamic = "force-dynamic";
 export default async function RidesPage() {
     const { data: rides, error } = await supabaseAdmin
         .from('rides')
-        .select('*, rider:rider_id(full_name), driver:driver_id(council_licence, license_plate, user:user_id(full_name, email))')
-        .order('requested_at', { ascending: false });
+        .select(`
+            id,
+            status,
+            pickup_address,
+            dropoff_address,
+            requested_at,
+            created_at,
+            accepted_at,
+            started_at,
+            completed_at,
+            cancelled_at,
+            estimated_price,
+            final_price,
+            payment_method,
+            payment_status,
+            vehicle_type,
+            passenger_count,
+            reference,
+            rider:rider_id(full_name, phone, email),
+            driver:driver_id(
+                council_licence,
+                license_plate,
+                vehicle_type,
+                vehicle_make,
+                vehicle_model,
+                user:user_id(full_name, phone, email)
+            )
+        `)
+        .order('created_at', { ascending: false })
+        .limit(1000);
 
     if (error) {
         console.error("Error fetching rides:", error);

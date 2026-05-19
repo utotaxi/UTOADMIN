@@ -14,6 +14,7 @@ import {
   CheckSquare,
   Square,
   Users as UsersIcon,
+  CreditCard,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -22,94 +23,101 @@ interface RideData {
   status: string;
   pickup_address: string;
   dropoff_address: string;
-  requested_at: string;
+  requested_at?: string;
+  created_at?: string;
+  accepted_at?: string;
+  started_at?: string;
+  completed_at?: string;
+  cancelled_at?: string;
   estimated_price: number;
   final_price?: number;
-  distance?: number;
-  estimated_duration?: number;
+  payment_method?: string;
   payment_status?: string;
+  vehicle_type?: string;
   passenger_count?: number;
-  rider?: { full_name: string } | null;
+  reference?: string;
+  rider?: { full_name: string; phone?: string; email?: string } | null;
   driver?: {
     council_licence?: string;
     license_plate?: string;
-    user?: { full_name: string; email?: string } | null;
+    vehicle_type?: string;
+    vehicle_make?: string;
+    vehicle_model?: string;
+    user?: { full_name: string; phone?: string; email?: string } | null;
   } | null;
 }
 
-// Map internal status to display labels
+// Returns the best available timestamp for a ride
+function getRideTimestamp(ride: RideData): string {
+  return ride.requested_at || ride.created_at || '';
+}
+
+// Returns the most relevant completed/event timestamp for reporting
+function getEventTimestamp(ride: RideData): string {
+  if (ride.status === 'completed' && ride.completed_at) return ride.completed_at;
+  if (ride.status === 'cancelled' && ride.cancelled_at) return ride.cancelled_at;
+  if (ride.accepted_at) return ride.accepted_at;
+  return getRideTimestamp(ride);
+}
+
 function getDisplayStatus(status: string): { label: string; priority: number } {
   switch (status) {
-    case 'accepted':
-      return { label: 'In Progress', priority: 1 };
+    case 'accepted':   return { label: 'In Progress', priority: 1 };
+    case 'arrived':    return { label: 'Driver Arrived', priority: 2 };
     case 'started':
-    case 'in_progress':
-      return { label: 'POB', priority: 2 };
-    case 'completed':
-      return { label: 'Completed', priority: 3 };
-    case 'cancelled':
-      return { label: 'Cancelled', priority: 4 };
-    case 'pending':
-      return { label: 'Pending', priority: 5 };
-    default:
-      return { label: status, priority: 6 };
+    case 'in_progress': return { label: 'POB', priority: 3 };
+    case 'completed':  return { label: 'Completed', priority: 4 };
+    case 'cancelled':  return { label: 'Cancelled', priority: 5 };
+    case 'pending':    return { label: 'Pending', priority: 6 };
+    default:           return { label: status?.replace(/_/g, ' ') || 'Unknown', priority: 7 };
   }
 }
 
 function getStatusBadgeStyles(status: string): string {
   switch (status) {
-    case 'accepted':
-      return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400';
+    case 'accepted':   return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400';
+    case 'arrived':    return 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400';
     case 'started':
-    case 'in_progress':
-      return 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400';
-    case 'completed':
-      return 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400';
-    case 'cancelled':
-      return 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400';
-    default:
-      return 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400';
+    case 'in_progress': return 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400';
+    case 'completed':  return 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400';
+    case 'cancelled':  return 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400';
+    default:           return 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400';
   }
 }
 
 function getStatusIcon(status: string) {
   switch (status) {
-    case 'completed':
-      return <CheckCircle2 className="w-3 h-3" />;
-    case 'cancelled':
-      return <XCircle className="w-3 h-3" />;
+    case 'completed':  return <CheckCircle2 className="w-3 h-3" />;
+    case 'cancelled':  return <XCircle className="w-3 h-3" />;
     case 'started':
-    case 'in_progress':
-      return <UsersIcon className="w-3 h-3" />;
-    case 'accepted':
-      return <Car className="w-3 h-3" />;
-    default:
-      return <Clock className="w-3 h-3" />;
+    case 'in_progress': return <UsersIcon className="w-3 h-3" />;
+    case 'accepted':   return <Car className="w-3 h-3" />;
+    case 'arrived':    return <MapPin className="w-3 h-3" />;
+    default:           return <Clock className="w-3 h-3" />;
   }
 }
 
-// Format date for council report
-function formatDateForReport(dateStr: string): string {
+function formatDate(dateStr: string | undefined): string {
+  if (!dateStr) return '—';
   try {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  } catch {
-    return '';
-  }
+    return new Date(dateStr).toLocaleDateString('en-GB', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+    });
+  } catch { return '—'; }
 }
 
-function formatTimeForReport(dateStr: string): string {
+function formatTime(dateStr: string | undefined): string {
+  if (!dateStr) return '—';
   try {
-    const d = new Date(dateStr);
-    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
-  } catch {
-    return '';
-  }
+    return new Date(dateStr).toLocaleTimeString('en-GB', {
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+  } catch { return '—'; }
 }
 
-// Generate reference code from ride ID
-function getRideReference(id: string): string {
-  return id.replace(/-/g, '').substring(0, 6).toUpperCase();
+function getRideReference(ride: RideData): string {
+  if (ride.reference) return ride.reference.toUpperCase();
+  return ride.id.replace(/-/g, '').substring(0, 6).toUpperCase();
 }
 
 export default function RidesClient({ rides }: { rides: RideData[] }) {
@@ -118,34 +126,28 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
 
-  // Sort rides: In Progress first, then POB, then Completed, then rest
   const sortedAndFilteredRides = useMemo(() => {
     let filtered = rides;
-
     if (statusFilter !== 'all') {
       filtered = rides.filter(r => {
         const { label } = getDisplayStatus(r.status);
         return label.toLowerCase() === statusFilter.toLowerCase();
       });
     }
-
     return [...filtered].sort((a, b) => {
       const aPriority = getDisplayStatus(a.status).priority;
       const bPriority = getDisplayStatus(b.status).priority;
       if (aPriority !== bPriority) return aPriority - bPriority;
-      // Within same status, most recent first
-      return new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime();
+      const aTime = getRideTimestamp(a);
+      const bTime = getRideTimestamp(b);
+      return new Date(bTime).getTime() - new Date(aTime).getTime();
     });
   }, [rides, statusFilter]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
@@ -162,20 +164,51 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
     const ridesToExport = sortedAndFilteredRides.filter(r => selectedIds.has(r.id));
     if (ridesToExport.length === 0) return;
 
-    // Council report format headers
-    const headers = ['Date', 'Time', 'Journey From', 'Journey To', 'Hirer', 'Driver', 'Badge No.', 'Vehicle Plate No.'];
+    const headers = [
+      'Reference',
+      'Date',
+      'Time',
+      'Status',
+      'Journey From',
+      'Journey To',
+      'Hirer (Rider)',
+      'Rider Phone',
+      'Driver',
+      'Driver Phone',
+      'Badge No.',
+      'Vehicle Plate',
+      'Vehicle Type',
+      'Payment Method',
+      'Payment Status',
+      'Amount (£)',
+      'Completed At',
+      'Cancelled At',
+    ];
 
     const rows = ridesToExport.map(ride => {
-      const date = formatDateForReport(ride.requested_at);
-      const time = formatTimeForReport(ride.requested_at);
-      const from = (ride.pickup_address || '').replace(/"/g, '""');
-      const to = (ride.dropoff_address || '').replace(/"/g, '""');
-      const hirer = (ride.rider?.full_name || 'Unknown').replace(/"/g, '""');
-      const driver = (ride.driver?.user?.full_name || 'Unassigned').replace(/"/g, '""');
-      const badgeNo = (ride.driver?.council_licence || '').replace(/"/g, '""');
-      const plateNo = (ride.driver?.license_plate || '').replace(/"/g, '""');
-
-      return [date, time, `"${from}"`, `"${to}"`, `"${hirer}"`, `"${driver}"`, `"${badgeNo}"`, `"${plateNo}"`];
+      const ts = getRideTimestamp(ride);
+      const amount = (ride.final_price || ride.estimated_price || 0).toFixed(2);
+      const esc = (s: string) => `"${(s || '').replace(/"/g, '""')}"`;
+      return [
+        esc(getRideReference(ride)),
+        esc(formatDate(ts)),
+        esc(formatTime(ts)),
+        esc(getDisplayStatus(ride.status).label),
+        esc(ride.pickup_address || ''),
+        esc(ride.dropoff_address || ''),
+        esc(ride.rider?.full_name || 'Unknown'),
+        esc(ride.rider?.phone || ''),
+        esc(ride.driver?.user?.full_name || 'Unassigned'),
+        esc(ride.driver?.user?.phone || ''),
+        esc(ride.driver?.council_licence || ''),
+        esc(ride.driver?.license_plate || ''),
+        esc(ride.vehicle_type || ride.driver?.vehicle_type || ''),
+        esc(ride.payment_method || ''),
+        esc(ride.payment_status || ''),
+        amount,
+        esc(ride.completed_at ? `${formatDate(ride.completed_at)} ${formatTime(ride.completed_at)}` : ''),
+        esc(ride.cancelled_at ? `${formatDate(ride.cancelled_at)} ${formatTime(ride.cancelled_at)}` : ''),
+      ];
     });
 
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -191,16 +224,25 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
   };
 
   const allSelected = sortedAndFilteredRides.length > 0 && selectedIds.size === sortedAndFilteredRides.length;
-  const statusOptions = ['all', 'In Progress', 'POB', 'Completed', 'Cancelled', 'Pending'];
+  const statusOptions = ['all', 'In Progress', 'Driver Arrived', 'POB', 'Completed', 'Cancelled', 'Pending'];
+
+  // Summary counts
+  const counts = useMemo(() => ({
+    total: rides.length,
+    completed: rides.filter(r => r.status === 'completed').length,
+    cancelled: rides.filter(r => r.status === 'cancelled').length,
+    active: rides.filter(r => ['accepted', 'arrived', 'started', 'in_progress'].includes(r.status)).length,
+    pending: rides.filter(r => r.status === 'pending').length,
+  }), [rides]);
 
   return (
-    <div className="flex flex-col gap-8 w-full">
+    <div className="flex flex-col gap-6 w-full">
+      {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Rides & Trips</h1>
-          <p className="text-muted-foreground">Monitor live trips, view history, and generate council reports.</p>
+        <div className="flex flex-col gap-1">
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Rides &amp; Trips</h1>
+          <p className="text-muted-foreground text-sm">Monitor live trips, view history, and generate council reports.</p>
         </div>
-
         <div className="flex items-center gap-3">
           {/* Status filter */}
           <div className="relative" ref={filterRef}>
@@ -247,30 +289,44 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
         </div>
       </div>
 
-      <div className="rounded-xl border bg-card text-card-foreground shadow-sm w-full overflow-hidden glass">
+      {/* Summary stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        {[
+          { label: 'Total', value: counts.total, color: 'text-foreground' },
+          { label: 'Active', value: counts.active, color: 'text-blue-600 dark:text-blue-400' },
+          { label: 'Completed', value: counts.completed, color: 'text-emerald-600 dark:text-emerald-400' },
+          { label: 'Cancelled', value: counts.cancelled, color: 'text-rose-600 dark:text-rose-400' },
+          { label: 'Pending', value: counts.pending, color: 'text-amber-600 dark:text-amber-400' },
+        ].map(stat => (
+          <div key={stat.label} className="bg-card border rounded-xl p-4 shadow-sm flex flex-col gap-1">
+            <span className={cn("text-2xl font-bold", stat.color)}>{stat.value}</span>
+            <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">{stat.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div className="rounded-xl border bg-card text-card-foreground shadow-sm w-full overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
             <thead className="text-xs text-muted-foreground uppercase bg-slate-50/50 dark:bg-slate-900/50 border-b">
               <tr>
-                <th scope="col" className="px-4 py-4 font-medium w-10">
+                <th className="px-4 py-4 font-medium w-10">
                   <button onClick={selectAll} className="flex items-center justify-center hover:text-primary transition-colors">
-                    {allSelected ? (
-                      <CheckSquare className="w-4 h-4 text-primary" />
-                    ) : (
-                      <Square className="w-4 h-4" />
-                    )}
+                    {allSelected ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
                   </button>
                 </th>
-                <th scope="col" className="px-4 py-4 font-medium">Status</th>
-                <th scope="col" className="px-4 py-4 font-medium">Driver</th>
-                <th scope="col" className="px-4 py-4 font-medium">Reference</th>
-                <th scope="col" className="px-4 py-4 font-medium">Date & Time</th>
-                <th scope="col" className="px-4 py-4 font-medium">Hirer (Rider)</th>
-                <th scope="col" className="px-4 py-4 font-medium">Journey From</th>
-                <th scope="col" className="px-4 py-4 font-medium">Journey To</th>
-                <th scope="col" className="px-4 py-4 font-medium">Badge No.</th>
-                <th scope="col" className="px-4 py-4 font-medium">Vehicle Plate</th>
-                <th scope="col" className="px-4 py-4 font-medium">Amount</th>
+                <th className="px-4 py-4 font-medium">Status</th>
+                <th className="px-4 py-4 font-medium">Driver</th>
+                <th className="px-4 py-4 font-medium">Reference</th>
+                <th className="px-4 py-4 font-medium">Date &amp; Time</th>
+                <th className="px-4 py-4 font-medium">Hirer (Rider)</th>
+                <th className="px-4 py-4 font-medium">Journey From</th>
+                <th className="px-4 py-4 font-medium">Journey To</th>
+                <th className="px-4 py-4 font-medium">Badge No.</th>
+                <th className="px-4 py-4 font-medium">Vehicle Plate</th>
+                <th className="px-4 py-4 font-medium">Payment</th>
+                <th className="px-4 py-4 font-medium">Amount</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -278,6 +334,11 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                 sortedAndFilteredRides.map((ride) => {
                   const display = getDisplayStatus(ride.status);
                   const isSelected = selectedIds.has(ride.id);
+                  const ts = getRideTimestamp(ride);
+                  const amount = ride.final_price || ride.estimated_price || 0;
+                  const paymentLabel = ride.payment_method === 'card' ? 'Card' : ride.payment_method === 'pay' ? 'Cash' : (ride.payment_method || '—');
+                  const isPaid = ride.payment_status === 'completed' || ride.payment_status === 'card_charged';
+
                   return (
                     <tr
                       key={ride.id}
@@ -285,17 +346,15 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                       className={cn(
                         "transition-colors cursor-pointer",
                         isSelected
-                          ? "bg-primary/5 dark:bg-primary/10 hover:bg-primary/10 dark:hover:bg-primary/15"
+                          ? "bg-primary/5 dark:bg-primary/10 hover:bg-primary/10"
                           : "bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50"
                       )}
                     >
                       <td className="px-4 py-4">
                         <div className="flex items-center justify-center">
-                          {isSelected ? (
-                            <CheckSquare className="w-4 h-4 text-primary" />
-                          ) : (
-                            <Square className="w-4 h-4 text-muted-foreground" />
-                          )}
+                          {isSelected
+                            ? <CheckSquare className="w-4 h-4 text-primary" />
+                            : <Square className="w-4 h-4 text-muted-foreground" />}
                         </div>
                       </td>
                       <td className="px-4 py-4">
@@ -308,34 +367,44 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                         </span>
                       </td>
                       <td className="px-4 py-4">
-                        <span className="font-medium text-foreground">
-                          {ride.driver?.user?.full_name || 'Unassigned'}
-                        </span>
+                        <div className="flex flex-col">
+                          <span className="font-medium text-foreground text-xs">
+                            {ride.driver?.user?.full_name || 'Unassigned'}
+                          </span>
+                          {ride.driver?.license_plate && (
+                            <span className="text-[10px] text-muted-foreground font-mono">{ride.driver.license_plate}</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-4">
                         <span className="font-mono text-xs font-bold tracking-wider bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded border">
-                          {getRideReference(ride.id)}
+                          {getRideReference(ride)}
                         </span>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap text-muted-foreground">
                         <div className="flex flex-col">
-                          <span className="font-medium text-foreground">{formatDateForReport(ride.requested_at)}</span>
-                          <span className="text-xs">{formatTimeForReport(ride.requested_at)}</span>
+                          <span className="font-medium text-foreground text-xs">{formatDate(ts)}</span>
+                          <span className="text-xs">{formatTime(ts)}</span>
                         </div>
                       </td>
                       <td className="px-4 py-4">
-                        <span className="font-medium text-foreground">
-                          {ride.rider?.full_name || 'Unknown Rider'}
-                        </span>
+                        <div className="flex flex-col">
+                          <span className="font-medium text-foreground text-xs">
+                            {ride.rider?.full_name || 'Unknown Rider'}
+                          </span>
+                          {ride.rider?.phone && (
+                            <span className="text-[10px] text-muted-foreground">{ride.rider.phone}</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="flex items-start gap-1.5 max-w-[200px]">
+                        <div className="flex items-start gap-1.5 max-w-[180px]">
                           <MapPin className="w-3.5 h-3.5 text-emerald-500 mt-0.5 flex-shrink-0" />
                           <span className="text-xs truncate" title={ride.pickup_address}>{ride.pickup_address}</span>
                         </div>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="flex items-start gap-1.5 max-w-[200px]">
+                        <div className="flex items-start gap-1.5 max-w-[180px]">
                           <MapPin className="w-3.5 h-3.5 text-rose-500 mt-0.5 flex-shrink-0" />
                           <span className="text-xs truncate" title={ride.dropoff_address}>{ride.dropoff_address}</span>
                         </div>
@@ -350,20 +419,49 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                           {ride.driver?.license_plate || '—'}
                         </span>
                       </td>
-                      <td className="px-4 py-4">
-                        <span className="font-semibold">
-                          £{(ride.final_price || ride.estimated_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="flex items-center gap-1 text-xs font-medium">
+                            <CreditCard className="w-3 h-3 text-muted-foreground" />
+                            {paymentLabel}
+                          </span>
+                          {ride.payment_status && (
+                            <span className={cn(
+                              "text-[10px] font-semibold uppercase tracking-wider",
+                              isPaid ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
+                            )}>
+                              {ride.payment_status.replace(/_/g, ' ')}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="font-semibold text-sm">
+                          £{amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </span>
+                        {ride.final_price && ride.final_price !== ride.estimated_price && (
+                          <span className="block text-[10px] text-muted-foreground line-through">
+                            est. £{(ride.estimated_price || 0).toFixed(2)}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={11} className="px-6 py-12 text-center text-muted-foreground">
+                  <td colSpan={12} className="px-6 py-12 text-center text-muted-foreground">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <AlertCircle className="w-8 h-8 opacity-50" />
                       <p>No trips found</p>
+                      {statusFilter !== 'all' && (
+                        <button
+                          onClick={() => setStatusFilter('all')}
+                          className="text-xs text-primary hover:underline mt-1"
+                        >
+                          Show all statuses
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
