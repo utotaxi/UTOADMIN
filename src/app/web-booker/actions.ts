@@ -64,11 +64,16 @@ export async function createWebBooking(data: any) {
     // 1. Check if user exists by phone or email
     let riderId = null;
 
+    // Build lookup filter: always match by phone, optionally also by email if provided
+    const lookupFilter = data.email
+      ? `phone.eq.${data.phone},email.eq.${data.email}`
+      : `phone.eq.${data.phone}`;
+
     const { data: existingUser } = await supabaseAdmin
       .from('users')
       .select('id')
-      .or(`phone.eq.${data.phone},email.eq.${data.email}`)
-      .single();
+      .or(lookupFilter)
+      .maybeSingle();
 
     if (existingUser) {
       riderId = existingUser.id;

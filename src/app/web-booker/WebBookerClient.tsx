@@ -298,8 +298,8 @@ export default function WebBookerClient() {
                       value={formData.lastName} onChange={e => setFormData({...formData, lastName: e.target.value})} />
                   </div>
                   <div className="flex flex-col gap-1 relative">
-                    <label className="text-[10px] text-slate-500 absolute -top-2 left-2 bg-[#fdfdfd] dark:bg-card px-1">Email address</label>
-                    <input type="email" required className="p-2 border border-slate-200 rounded-sm outline-none focus:border-primary bg-transparent text-sm"
+                    <label className="text-[10px] text-slate-500 absolute -top-2 left-2 bg-[#fdfdfd] dark:bg-card px-1">Email address <span className="text-slate-400 font-normal">(optional)</span></label>
+                    <input type="email" className="p-2 border border-slate-200 rounded-sm outline-none focus:border-primary bg-transparent text-sm"
                       value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
                   </div>
                   <div className="flex flex-col gap-1 relative">
@@ -324,8 +324,8 @@ export default function WebBookerClient() {
                     <select className="p-2 border-b-2 border-primary outline-none focus:border-primary bg-transparent text-sm appearance-none"
                       value={formData.vehicleType} onChange={e => setFormData({...formData, vehicleType: e.target.value})}>
                       <option value="Saloon">Saloon</option>
+                      <option value="People Carrier">People Carrier</option>
                       <option value="Minibus">Minibus</option>
-                      <option value="Executive">Executive</option>
                     </select>
                     <ChevronDown className="w-4 h-4 absolute right-1 top-[10px] text-slate-400 pointer-events-none" />
                   </div>
