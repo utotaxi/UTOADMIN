@@ -22,6 +22,13 @@ export default async function WebBookingDetailsPage({ params }: { params: Promis
         return notFound();
     }
 
+    // Fetch all approved drivers for manual assignment dropdown
+    const { data: drivers } = await supabaseAdmin
+        .from('drivers')
+        .select('id, vehicle_make, vehicle_model, license_plate, vehicle_type, is_online, is_available, user:user_id(full_name, phone)')
+        .eq('is_approved', true)
+        .order('is_online', { ascending: false });
+
     return (
         <div className="flex flex-col gap-6 w-full max-w-5xl">
             <div className="flex items-center gap-4">
@@ -36,7 +43,7 @@ export default async function WebBookingDetailsPage({ params }: { params: Promis
                 </div>
             </div>
 
-            <BookingDetailsClient booking={booking} key={booking.id} />
+            <BookingDetailsClient booking={booking} drivers={drivers || []} key={booking.id} />
         </div>
     );
 }

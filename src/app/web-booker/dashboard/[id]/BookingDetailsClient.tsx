@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { updateBookingAction, duplicateBookingAction } from './actions';
-import { MapPin, Clock, Calendar, Car, CreditCard, User as UserIcon, ScrollText, Edit2, Copy, Repeat, Save, X } from "lucide-react";
+import { updateBookingAction, duplicateBookingAction, assignDriverAction } from './actions';
+import { MapPin, Clock, Calendar, Car, CreditCard, User as UserIcon, ScrollText, Edit2, Copy, Repeat, Save, X, UserCheck, CheckCircle2, AlertCircle } from "lucide-react";
 import { formatUKDate } from "@/lib/utils";
 
 function StatusBadge({ status }: { status: string }) {
@@ -26,7 +26,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export default function BookingDetailsClient({ booking }: { booking: any }) {
+export default function BookingDetailsClient({ booking, drivers = [] }: { booking: any; drivers?: any[] }) {
     const router = useRouter();
     const [isEditing, setIsEditing] = useState(false);
     const [editData, setEditData] = useState({
@@ -40,6 +40,12 @@ export default function BookingDetailsClient({ booking }: { booking: any }) {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isBookingReturn, setIsBookingReturn] = useState(false);
     const [returnScheduledTime, setReturnScheduledTime] = useState('');
+
+    // Driver assignment state
+    const [selectedDriverId, setSelectedDriverId] = useState(booking.assigned_driver_id || '');
+    const [isAssigning, setIsAssigning] = useState(false);
+    const [assignSuccess, setAssignSuccess] = useState('');
+    const [assignError, setAssignError] = useState('');
 
     const handleSave = async () => {
         setIsSubmitting(true);
@@ -82,7 +88,26 @@ export default function BookingDetailsClient({ booking }: { booking: any }) {
         setIsBookingReturn(false);
     };
 
+    const handleAssignDriver = async () => {
+        if (!selectedDriverId) {
+            setAssignError('Please select a driver to assign.');
+            return;
+        }
+        setIsAssigning(true);
+        setAssignSuccess('');
+        setAssignError('');
+        try {
+            const result = await assignDriverAction(booking.id, selectedDriverId);
+            setAssignSuccess(`✅ Driver "${result.driverName}" successfully assigned and notified!`);
+            router.refresh();
+        } catch (error: unknown) {
+            console.error("Failed to assign driver:", error);
+            setAssignError('Failed to assign driver: ' + (error instanceof Error ? error.message : 'Unknown error'));
+        }
+        setIsAssigning(false);
+    };
 
+    const canAssign = booking.status !== 'completed' && booking.status !== 'cancelled';
 
     return (
         <div className="flex flex-col gap-6 w-full">
@@ -133,7 +158,7 @@ export default function BookingDetailsClient({ booking }: { booking: any }) {
             </div>
 
             <div className="grid gap-6 md:grid-cols-3">
-                {/* Booking Info Card */}
+                {/* Left column */}
                 <div className="md:col-span-1 flex flex-col gap-6">
                     <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6 glass flex flex-col items-center text-center">
                         <div className="h-24 w-24 relative rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800 mb-4 shadow-sm ring-4 ring-slate-50 dark:ring-slate-900 flex items-center justify-center text-primary">
@@ -162,7 +187,7 @@ export default function BookingDetailsClient({ booking }: { booking: any }) {
 
                         <div className="w-full pt-6 border-t border-border flex flex-col gap-4 text-sm text-left">
                             <div className="flex justify-between items-center">
-                                <span className="text-muted-foreground flex items-center gap-2"><CreditCard className="w-4 h-4"/> Est. Price</span>
+                                <span className="text-muted-foreground flex items-center gap-2"><CreditCard className="w-4 h-4"/>Est. Price</span>
                                 {isEditing ? (
                                     <input 
                                         type="number" 
@@ -175,7 +200,7 @@ export default function BookingDetailsClient({ booking }: { booking: any }) {
                                 )}
                             </div>
                             <div className="flex justify-between items-center">
-                                <span className="text-muted-foreground flex items-center gap-2"><Calendar className="w-4 h-4"/> Created</span>
+                                <span className="text-muted-foreground flex items-center gap-2"><Calendar className="w-4 h-4"/>Created</span>
                                 <span className="font-medium">{formatUKDate(booking.created_at, 'MMM dd, yyyy')}</span>
                             </div>
                         </div>
@@ -192,9 +217,11 @@ export default function BookingDetailsClient({ booking }: { booking: any }) {
                                 <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded ${
                                     booking.dispatch_mode === 'marketplace' 
                                         ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/20' 
+                                        : booking.dispatch_mode === 'manual'
+                                        ? 'bg-violet-50 text-violet-600 dark:bg-violet-900/20'
                                         : 'bg-blue-50 text-blue-600 dark:bg-blue-900/20'
                                 }`}>
-                                    {booking.dispatch_mode === 'marketplace' ? '\u{1F4E2} Marketplace' : '\u{1F3AF} DSA Direct'}
+                                    {booking.dispatch_mode === 'marketplace' ? '\u{1F4E2} Marketplace' : booking.dispatch_mode === 'manual' ? '\u{270F}\uFE0F Manual' : '\u{1F3AF} DSA Direct'}
                                 </span>
                             </div>
                             {booking.assigned_driver_name && (
@@ -216,6 +243,79 @@ export default function BookingDetailsClient({ booking }: { booking: any }) {
                                 <p className="text-xs text-muted-foreground italic mt-1">{booking.dispatch_note}</p>
                             )}
                         </div>
+                    </div>
+
+                    {/* ── Manual Driver Assignment Card ── */}
+                    <div className="rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/10 text-card-foreground shadow-sm p-5">
+                        <h3 className="font-bold text-sm mb-1 flex items-center gap-2 text-violet-700 dark:text-violet-300 uppercase tracking-wider">
+                            <UserCheck className="w-4 h-4" /> Assign Driver Manually
+                        </h3>
+                        <p className="text-xs text-muted-foreground mb-3">
+                            Override automatic dispatch — pick any approved driver from the list.
+                        </p>
+
+                        {!canAssign ? (
+                            <p className="text-xs text-muted-foreground italic">
+                                Cannot assign a driver to a {booking.status} booking.
+                            </p>
+                        ) : (
+                            <div className="flex flex-col gap-3">
+                                <select
+                                    className="border border-violet-300 dark:border-violet-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-900 w-full focus:ring-2 focus:ring-violet-400 focus:outline-none"
+                                    value={selectedDriverId}
+                                    onChange={e => {
+                                        setSelectedDriverId(e.target.value);
+                                        setAssignSuccess('');
+                                        setAssignError('');
+                                    }}
+                                >
+                                    <option value="">— Select a driver —</option>
+                                    {drivers.map((driver: any) => {
+                                        const driverUser = driver.user as any;
+                                        const name = driverUser?.full_name || 'Unknown';
+                                        const status = driver.is_online
+                                            ? driver.is_available ? '🟢 Online' : '🟡 On Trip'
+                                            : '⚫ Offline';
+                                        return (
+                                            <option key={driver.id} value={driver.id}>
+                                                {status} — {name} ({driver.vehicle_make} {driver.vehicle_model} · {driver.license_plate})
+                                            </option>
+                                        );
+                                    })}
+                                </select>
+
+                                <button
+                                    onClick={handleAssignDriver}
+                                    disabled={isAssigning || !selectedDriverId}
+                                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-semibold transition shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {isAssigning ? (
+                                        <>
+                                            <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                                            Assigning...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <UserCheck className="w-4 h-4" />
+                                            Assign Driver
+                                        </>
+                                    )}
+                                </button>
+
+                                {assignSuccess && (
+                                    <div className="flex items-start gap-2 p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+                                        <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                        {assignSuccess}
+                                    </div>
+                                )}
+                                {assignError && (
+                                    <div className="flex items-start gap-2 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-lg text-xs text-rose-700 dark:text-rose-400 font-medium">
+                                        <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                        {assignError}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
 
