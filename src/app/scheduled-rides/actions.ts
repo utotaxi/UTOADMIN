@@ -1,6 +1,7 @@
 'use server';
 
 import { supabaseAdmin } from "@/lib/supabase";
+import { revalidatePath } from "next/cache";
 
 /**
  * Fetch all drivers (with their user names) for manual assignment dropdown.
@@ -53,9 +54,11 @@ export async function manualAssignDriverToScheduled(bookingId: string, driverId:
     }
 
     console.log(`[ManualAssign] Driver ${driverName} manually assigned to scheduled ride ${bookingId}`);
+    revalidatePath('/scheduled-rides');
     return { success: true };
   } catch (err: any) {
     console.error("[ManualAssign] Error:", err);
     return { success: false, error: err.message };
   }
 }
+

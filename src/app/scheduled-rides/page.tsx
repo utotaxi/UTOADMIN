@@ -328,7 +328,7 @@ export default async function ScheduledRidesPage() {
                                                         </span>
                                                     </div>
                                                 </td>
-                                                <td className="px-6 py-4 relative">
+                                                <td className="px-6 py-4">
                                                     <AssignDriverButton bookingId={booking.id} currentDriverName={booking.driver_name} />
                                                 </td>
                                                 <td className="px-6 py-4">
