@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
+import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 import { fetchSingleRideAction } from './actions';
 import {
   MapPin,
@@ -138,7 +138,8 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
 
   // Real-time Postgres changes subscription
   useEffect(() => {
-    const channel = supabase
+    const client = createSupabaseBrowserClient();
+    const channel = client
       .channel('realtime-rides-updates')
       .on(
         'postgres_changes',
@@ -168,7 +169,7 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      client.removeChannel(channel);
     };
   }, []);
 
