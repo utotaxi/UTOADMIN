@@ -29,8 +29,8 @@ interface VehiclePricing {
 
 const VEHICLE_TYPES = [
   'Saloon',
-  'Minibus',
-  'Executive'
+  'People Carrier',
+  'Minibus'
 ];
 
 interface SettingsClientProps {

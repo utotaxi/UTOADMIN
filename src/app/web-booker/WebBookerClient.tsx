@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { createWebBooking } from './actions';
-import { MapPin, Clock, User, CreditCard, ChevronDown, CheckCircle, Calculator, FileText, Store, Radio, Car, AlertTriangle } from 'lucide-react';
+import { createWebBooking, fetchAllDriversForWebBooker, manualAssignDriverToWebBooking } from './actions';
+import { MapPin, Clock, User, CreditCard, ChevronDown, CheckCircle, Calculator, FileText, Store, Radio, Car, AlertTriangle, UserPlus, Search, Circle, ToggleLeft, ToggleRight } from 'lucide-react';
 
 function AutocompleteInput({ value, onChange, placeholder, className, isPickup }: { value: string, onChange: (v: string) => void, placeholder: string, className?: string, isPickup?: boolean }) {
   const [suggestions, setSuggestions] = useState<any[]>([]);
@@ -127,7 +127,7 @@ export default function WebBookerClient() {
   const [success, setSuccess] = useState(false);
   const [bookingRef, setBookingRef] = useState("");
   const [dispatchResult, setDispatchResult] = useState<{
-    mode: 'marketplace' | 'dsa_direct';
+    mode: 'marketplace' | 'dsa_direct' | 'manual';
     assignedDriver?: {
       name: string;
       distance_miles: number;
@@ -136,20 +136,89 @@ export default function WebBookerClient() {
     } | null;
   } | null>(null);
 
+  // Manual assign state
+  const [manualAssign, setManualAssign] = useState(false);
+  const [drivers, setDrivers] = useState<any[]>([]);
+  const [selectedDriver, setSelectedDriver] = useState<any>(null);
+  const [driverSearch, setDriverSearch] = useState('');
+  const [showDriverDropdown, setShowDriverDropdown] = useState(false);
+  const [driversLoading, setDriversLoading] = useState(false);
+  const driverDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Load drivers when manual assign is toggled on
+  useEffect(() => {
+    if (manualAssign && drivers.length === 0) {
+      setDriversLoading(true);
+      fetchAllDriversForWebBooker().then(res => {
+        if (res.success) setDrivers(res.drivers);
+        setDriversLoading(false);
+      });
+    }
+  }, [manualAssign]);
+
+  // Close driver dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(event: any) {
+      if (driverDropdownRef.current && !driverDropdownRef.current.contains(event.target)) {
+        setShowDriverDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredDrivers = drivers.filter(d =>
+    d.name.toLowerCase().includes(driverSearch.toLowerCase()) ||
+    d.vehicle.toLowerCase().includes(driverSearch.toLowerCase()) ||
+    d.plate.toLowerCase().includes(driverSearch.toLowerCase())
+  );
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (manualAssign && !selectedDriver) {
+      alert('Please select a driver for manual assignment.');
+      return;
+    }
+    
     setLoading(true);
     const res = await createWebBooking(formData);
-    setLoading(false);
     
     if (res.success) {
-      setBookingRef(res.ride.reference);
-      setDispatchResult({
-        mode: res.dispatchMode as 'marketplace' | 'dsa_direct',
-        assignedDriver: res.assignedDriver,
-      });
-      setSuccess(true);
+      // If manual assign is on, assign the selected driver to the booking
+      if (manualAssign && selectedDriver) {
+        const assignRes = await manualAssignDriverToWebBooking(
+          res.ride.id,
+          selectedDriver.id,
+          selectedDriver.name
+        );
+        setLoading(false);
+        if (assignRes.success) {
+          setBookingRef(res.ride.reference);
+          setDispatchResult({
+            mode: 'manual',
+            assignedDriver: {
+              name: selectedDriver.name,
+              distance_miles: 0,
+              vehicle: selectedDriver.vehicle,
+              plate: selectedDriver.plate,
+            },
+          });
+          setSuccess(true);
+        } else {
+          alert('Booking created but driver assignment failed: ' + assignRes.error);
+        }
+      } else {
+        setLoading(false);
+        setBookingRef(res.ride.reference);
+        setDispatchResult({
+          mode: res.dispatchMode as 'marketplace' | 'dsa_direct',
+          assignedDriver: res.assignedDriver,
+        });
+        setSuccess(true);
+      }
     } else {
+      setLoading(false);
       alert("Error creating booking: " + res.error);
     }
   };
@@ -158,6 +227,8 @@ export default function WebBookerClient() {
     setSuccess(false);
     setBookingRef("");
     setDispatchResult(null);
+    setSelectedDriver(null);
+    setManualAssign(false);
     setFormData({
       pickupAddress: '',
       dropoffAddress: '',
@@ -264,19 +335,114 @@ export default function WebBookerClient() {
                  onChange={e => setFormData({...formData, time: e.target.value})}
                />
                {/* Dispatch Preview Indicator */}
-               <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
-                 dispatchPreview.isMarketplace 
-                   ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900' 
-                   : 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900'
-               }`}>
-                 {dispatchPreview.isMarketplace ? (
-                   <Store className="w-3.5 h-3.5" />
-                 ) : (
-                   <Radio className="w-3.5 h-3.5" />
-                 )}
-                 <span>{dispatchPreview.label}</span>
-               </div>
+               {!manualAssign && (
+                 <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                   dispatchPreview.isMarketplace 
+                     ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900' 
+                     : 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900'
+                 }`}>
+                   {dispatchPreview.isMarketplace ? (
+                     <Store className="w-3.5 h-3.5" />
+                   ) : (
+                     <Radio className="w-3.5 h-3.5" />
+                   )}
+                   <span>{dispatchPreview.label}</span>
+                 </div>
+               )}
             </div>
+          </div>
+
+          {/* Manual Assign Driver */}
+          <div className="flex gap-4">
+             <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center flex-shrink-0 text-primary">
+              <UserPlus size={18} />
+             </div>
+             <div className="flex flex-col gap-4 w-full">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-slate-400 font-semibold block tracking-wider uppercase">Driver Assignment</label>
+                  <button
+                    type="button"
+                    onClick={() => { setManualAssign(!manualAssign); setSelectedDriver(null); }}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
+                      manualAssign
+                        ? 'bg-primary/10 text-primary border-primary/30'
+                        : 'bg-slate-50 dark:bg-slate-900 text-slate-500 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    {manualAssign ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                    {manualAssign ? 'Manual' : 'Auto'}
+                  </button>
+                </div>
+
+                {manualAssign ? (
+                  <div ref={driverDropdownRef} className="relative">
+                    {selectedDriver ? (
+                      <div className="flex items-center justify-between p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-emerald-200 dark:bg-emerald-800 flex items-center justify-center">
+                            <Car className="w-4 h-4 text-emerald-700 dark:text-emerald-300" />
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-sm font-bold text-emerald-800 dark:text-emerald-200">{selectedDriver.name}</span>
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{selectedDriver.vehicle} • {selectedDriver.plate}</span>
+                          </div>
+                        </div>
+                        <button type="button" onClick={() => setSelectedDriver(null)} className="text-xs text-emerald-600 hover:text-emerald-800 underline">Change</button>
+                      </div>
+                    ) : (
+                      <>
+                        <div
+                          className="flex items-center gap-2 p-2 border border-slate-200 dark:border-slate-700 rounded-lg cursor-pointer hover:border-primary transition-colors"
+                          onClick={() => setShowDriverDropdown(!showDriverDropdown)}
+                        >
+                          <Search className="w-4 h-4 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="Search and select a driver..."
+                            className="w-full bg-transparent outline-none text-sm"
+                            value={driverSearch}
+                            onChange={e => { setDriverSearch(e.target.value); setShowDriverDropdown(true); }}
+                            onFocus={() => setShowDriverDropdown(true)}
+                          />
+                          <ChevronDown className="w-4 h-4 text-slate-400" />
+                        </div>
+
+                        {showDriverDropdown && (
+                          <div className="absolute z-50 mt-1 w-full bg-white dark:bg-slate-800 border shadow-xl rounded-lg overflow-hidden">
+                            <div className="max-h-48 overflow-y-auto">
+                              {driversLoading ? (
+                                <div className="p-4 text-center text-xs text-slate-400">Loading drivers...</div>
+                              ) : filteredDrivers.length === 0 ? (
+                                <div className="p-4 text-center text-xs text-slate-400">No drivers found</div>
+                              ) : (
+                                filteredDrivers.map(d => (
+                                  <button
+                                    key={d.id}
+                                    type="button"
+                                    onClick={() => { setSelectedDriver(d); setShowDriverDropdown(false); setDriverSearch(''); }}
+                                    className="w-full text-left px-3 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3 border-b border-slate-50 dark:border-slate-700 last:border-0 transition-colors"
+                                  >
+                                    <Circle className={`w-2 h-2 flex-shrink-0 ${d.is_online ? 'fill-emerald-500 text-emerald-500' : 'fill-slate-300 text-slate-300'}`} />
+                                    <div className="flex flex-col min-w-0">
+                                      <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 truncate">{d.name}</span>
+                                      <span className="text-[10px] text-slate-400 truncate">{d.vehicle} • {d.plate}</span>
+                                    </div>
+                                    {d.is_online && d.is_available && (
+                                      <span className="ml-auto text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">Available</span>
+                                    )}
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400">System will automatically find and assign the nearest available driver.</p>
+                )}
+             </div>
           </div>
 
           {/* Passenger */}
@@ -456,7 +622,29 @@ export default function WebBookerClient() {
           <div className="bg-white border p-6 shadow-2xl rounded-[12px] flex flex-col items-center gap-4 max-w-sm w-full animate-in fade-in zoom-in duration-200" style={{boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4)'}}>
             
             {/* Dispatch Mode Header */}
-            {dispatchResult?.mode === 'marketplace' ? (
+            {dispatchResult?.mode === 'manual' ? (
+              <>
+                <div className="w-14 h-14 rounded-full bg-indigo-100 flex items-center justify-center">
+                  <UserPlus className="w-7 h-7 text-indigo-600" />
+                </div>
+                <h3 className="text-[15px] font-bold tracking-tight text-slate-800 text-center">
+                  Driver Manually Assigned
+                </h3>
+                {dispatchResult.assignedDriver && (
+                  <div className="bg-indigo-50 border border-indigo-200 w-full p-3 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-indigo-200 flex items-center justify-center flex-shrink-0">
+                        <User className="w-5 h-5 text-indigo-700" />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-bold text-indigo-800">{dispatchResult.assignedDriver.name}</span>
+                        <span className="text-[11px] text-indigo-600">{dispatchResult.assignedDriver.vehicle} • {dispatchResult.assignedDriver.plate}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : dispatchResult?.mode === 'marketplace' ? (
               <>
                 <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center">
                   <Store className="w-7 h-7 text-amber-600" />

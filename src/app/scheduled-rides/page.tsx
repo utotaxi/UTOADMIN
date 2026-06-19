@@ -12,6 +12,7 @@ import {
     ArrowRight,
     Timer,
 } from "lucide-react";
+import AssignDriverButton from "./AssignDriverButton";
 
 export const dynamic = "force-dynamic";
 
@@ -327,17 +328,8 @@ export default async function ScheduledRidesPage() {
                                                         </span>
                                                     </div>
                                                 </td>
-                                                <td className="px-6 py-4">
-                                                    {booking.driver_name ? (
-                                                        <div className="flex items-center gap-2">
-                                                            <Car className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                                                            <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                                                                {booking.driver_name}
-                                                            </span>
-                                                        </div>
-                                                    ) : (
-                                                        <span className="text-xs text-muted-foreground italic">Unassigned</span>
-                                                    )}
+                                                <td className="px-6 py-4 relative">
+                                                    <AssignDriverButton bookingId={booking.id} currentDriverName={booking.driver_name} />
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     {getStatusBadge(booking.status)}
