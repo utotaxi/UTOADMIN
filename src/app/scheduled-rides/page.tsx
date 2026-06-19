@@ -298,11 +298,15 @@ export default async function ScheduledRidesPage() {
                                 {bookings && bookings.length > 0 ? (
                                     bookings.map((booking: any) => {
                                         const isPast = new Date(booking.pickup_at) <= now;
+                                        const isCancelled = booking.status === 'cancelled' || booking.status === 'cancelled_no_drivers';
+                                        const isExpired = booking.status === 'expired' || (isPast && booking.status === 'scheduled');
+                                        const shouldDim = isCancelled || isExpired;
                                         return (
                                             <tr
                                                 key={booking.id}
-                                                className={`bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${isPast && !['cancelled', 'completed'].includes(booking.status) ? 'opacity-60' : ''
-                                                    }`}
+                                                className={`bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
+                                                    shouldDim ? 'opacity-50 dark:opacity-40' : ''
+                                                }`}
                                             >
                                                 <td className="px-6 py-4">
                                                     <div className="flex flex-col max-w-[250px]">
