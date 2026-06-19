@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
+import { fetchSingleRideAction } from './actions';
 import {
   MapPin,
   Clock,
@@ -36,6 +38,7 @@ interface RideData {
   vehicle_type?: string;
   passenger_count?: number;
   reference?: string;
+  cancellation_reason?: string;
   rider?: { full_name: string; phone?: string; email?: string } | null;
   driver?: {
     council_licence?: string;
@@ -45,6 +48,7 @@ interface RideData {
     vehicle_model?: string;
     user?: { full_name: string; phone?: string; email?: string } | null;
   } | null;
+  payments?: { payment_method: string; status: string }[] | null;
 }
 
 // Returns the best available timestamp for a ride
@@ -121,15 +125,57 @@ function getRideReference(ride: RideData): string {
 }
 
 export default function RidesClient({ rides }: { rides: RideData[] }) {
+  const [ridesList, setRidesList] = useState<RideData[]>(rides);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
 
+  // Sync internal state when the server component yields new data
+  useEffect(() => {
+    setRidesList(rides);
+  }, [rides]);
+
+  // Real-time Postgres changes subscription
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime-rides-updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'rides' },
+        async (payload) => {
+          console.log('[Realtime] postgres_changes payload:', payload);
+
+          if (payload.eventType === 'DELETE') {
+            setRidesList((prev) => prev.filter((r) => r.id !== payload.old.id));
+          } else if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const res = await fetchSingleRideAction(payload.new.id);
+            if (res.success && res.ride) {
+              setRidesList((prev) => {
+                const index = prev.findIndex((r) => r.id === res.ride.id);
+                if (index !== -1) {
+                  const next = [...prev];
+                  next[index] = res.ride as any;
+                  return next;
+                } else {
+                  return [res.ride as any, ...prev];
+                }
+              });
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
   const sortedAndFilteredRides = useMemo(() => {
-    let filtered = rides;
+    let filtered = ridesList;
     if (statusFilter !== 'all') {
-      filtered = rides.filter(r => {
+      filtered = ridesList.filter(r => {
         const { label } = getDisplayStatus(r.status);
         return label.toLowerCase() === statusFilter.toLowerCase();
       });
@@ -142,7 +188,7 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
       const bTime = getRideTimestamp(b);
       return new Date(bTime).getTime() - new Date(aTime).getTime();
     });
-  }, [rides, statusFilter]);
+  }, [ridesList, statusFilter]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
@@ -187,8 +233,12 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
 
     const rows = ridesToExport.map(ride => {
       const ts = getRideTimestamp(ride);
-      const amount = (ride.final_price || ride.estimated_price || 0).toFixed(2);
+      const amountValue = ride.status === 'cancelled'
+        ? (ride.final_price || 0)
+        : (ride.final_price || ride.estimated_price || 0);
+      const amount = amountValue.toFixed(2);
       const esc = (s: string) => `"${(s || '').replace(/"/g, '""')}"`;
+      const pMethod = ride.payment_method || (ride as any).payments?.[0]?.payment_method || '';
       return [
         esc(getRideReference(ride)),
         esc(formatDate(ts)),
@@ -203,7 +253,7 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
         esc(ride.driver?.council_licence || ''),
         esc(ride.driver?.license_plate || ''),
         esc(ride.vehicle_type || ride.driver?.vehicle_type || ''),
-        esc(ride.payment_method || ''),
+        esc(pMethod),
         esc(ride.payment_status || ''),
         amount,
         esc(ride.completed_at ? `${formatDate(ride.completed_at)} ${formatTime(ride.completed_at)}` : ''),
@@ -228,12 +278,12 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
 
   // Summary counts
   const counts = useMemo(() => ({
-    total: rides.length,
-    completed: rides.filter(r => r.status === 'completed').length,
-    cancelled: rides.filter(r => r.status === 'cancelled').length,
-    active: rides.filter(r => ['accepted', 'arrived', 'started', 'in_progress'].includes(r.status)).length,
-    pending: rides.filter(r => r.status === 'pending').length,
-  }), [rides]);
+    total: ridesList.length,
+    completed: ridesList.filter(r => r.status === 'completed').length,
+    cancelled: ridesList.filter(r => r.status === 'cancelled').length,
+    active: ridesList.filter(r => ['accepted', 'arrived', 'started', 'in_progress'].includes(r.status)).length,
+    pending: ridesList.filter(r => r.status === 'pending').length,
+  }), [ridesList]);
 
   return (
     <div className="flex flex-col gap-6 w-full">
@@ -335,8 +385,11 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                   const display = getDisplayStatus(ride.status);
                   const isSelected = selectedIds.has(ride.id);
                   const ts = getRideTimestamp(ride);
-                  const amount = ride.final_price || ride.estimated_price || 0;
-                  const paymentLabel = ride.payment_method === 'card' ? 'Card' : ride.payment_method === 'pay' ? 'Cash' : (ride.payment_method || '—');
+                  const amount = ride.status === 'cancelled'
+                    ? (ride.final_price || 0)
+                    : (ride.final_price || ride.estimated_price || 0);
+                  const rawPaymentMethod = ride.payment_method || (ride as any).payments?.[0]?.payment_method;
+                  const paymentLabel = rawPaymentMethod === 'card' ? 'Card' : rawPaymentMethod === 'cash' || rawPaymentMethod === 'pay' ? 'Cash' : (rawPaymentMethod || '—');
                   const isPaid = ride.payment_status === 'completed' || ride.payment_status === 'card_charged';
 
                   return (
@@ -358,13 +411,20 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                         </div>
                       </td>
                       <td className="px-4 py-4">
-                        <span className={cn(
-                          "inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold",
-                          getStatusBadgeStyles(ride.status)
-                        )}>
-                          {getStatusIcon(ride.status)}
-                          {display.label}
-                        </span>
+                        <div className="flex flex-col gap-1">
+                          <span className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold w-fit",
+                            getStatusBadgeStyles(ride.status)
+                          )}>
+                            {getStatusIcon(ride.status)}
+                            {display.label}
+                          </span>
+                          {ride.status === 'cancelled' && ride.cancellation_reason && (
+                            <span className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold max-w-[150px] truncate" title={ride.cancellation_reason}>
+                              Reason: {ride.cancellation_reason}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex flex-col">
@@ -439,11 +499,15 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                         <span className="font-semibold text-sm">
                           £{amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </span>
-                        {ride.final_price && ride.final_price !== ride.estimated_price && (
-                          <span className="block text-[10px] text-muted-foreground line-through">
+                        {ride.status === 'cancelled' && ride.final_price ? (
+                          <span className="block text-[10px] text-rose-500 font-semibold">
+                            Cancellation Fee
+                          </span>
+                        ) : ride.final_price && ride.final_price !== ride.estimated_price ? (
+                          <span className="block text-[10px] text-muted-foreground line-through font-mono">
                             est. £{(ride.estimated_price || 0).toFixed(2)}
                           </span>
-                        )}
+                        ) : null}
                       </td>
                     </tr>
                   );
@@ -495,3 +559,4 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
     </div>
   );
 }
+

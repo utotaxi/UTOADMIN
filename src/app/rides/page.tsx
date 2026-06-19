@@ -12,18 +12,15 @@ export default async function RidesPage() {
             pickup_address,
             dropoff_address,
             requested_at,
-            created_at,
             accepted_at,
             started_at,
             completed_at,
             cancelled_at,
             estimated_price,
             final_price,
-            payment_method,
             payment_status,
             vehicle_type,
-            passenger_count,
-            reference,
+            cancellation_reason,
             rider:rider_id(full_name, phone, email),
             driver:driver_id(
                 council_licence,
@@ -32,9 +29,10 @@ export default async function RidesPage() {
                 vehicle_make,
                 vehicle_model,
                 user:user_id(full_name, phone, email)
-            )
+            ),
+            payments(payment_method, status)
         `)
-        .order('created_at', { ascending: false })
+        .order('requested_at', { ascending: false })
         .limit(1000);
 
     if (error) {
@@ -43,3 +41,4 @@ export default async function RidesPage() {
 
     return <RidesClient rides={(rides as any) || []} />;
 }
+
