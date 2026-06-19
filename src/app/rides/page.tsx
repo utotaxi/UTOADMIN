@@ -41,5 +41,5 @@ export default async function RidesPage() {
         console.error("Error fetching rides:", error);
     }
 
-    return <RidesClient rides={rides || []} />;
+    return <RidesClient rides={(rides as any) || []} />;
 }
