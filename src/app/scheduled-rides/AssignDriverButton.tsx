@@ -31,6 +31,43 @@ export default function AssignDriverButton({ bookingId, currentDriverName }: { b
     setAssigned(currentDriverName);
   }, [currentDriverName]);
 
+  // Adjust parent table row and cell z-index when open to prevent overlapping by subsequent table rows
+  useEffect(() => {
+    const parentTd = wrapperRef.current?.closest('td');
+    const parentTr = wrapperRef.current?.closest('tr');
+
+    if (open) {
+      if (parentTd) {
+        parentTd.style.position = 'relative';
+        parentTd.style.zIndex = '100';
+      }
+      if (parentTr) {
+        parentTr.style.position = 'relative';
+        parentTr.style.zIndex = '100';
+      }
+    } else {
+      if (parentTd) {
+        parentTd.style.position = '';
+        parentTd.style.zIndex = '';
+      }
+      if (parentTr) {
+        parentTr.style.position = '';
+        parentTr.style.zIndex = '';
+      }
+    }
+
+    return () => {
+      if (parentTd) {
+        parentTd.style.position = '';
+        parentTd.style.zIndex = '';
+      }
+      if (parentTr) {
+        parentTr.style.position = '';
+        parentTr.style.zIndex = '';
+      }
+    };
+  }, [open]);
+
   useEffect(() => {
     function handleClickOutside(event: any) {
       if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
