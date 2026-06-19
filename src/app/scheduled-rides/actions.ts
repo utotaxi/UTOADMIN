@@ -43,7 +43,6 @@ export async function manualAssignDriverToScheduled(bookingId: string, driverId:
       .from('later_bookings')
       .update({
         driver_id: driverId,
-        assigned_driver_id: driverId,
         status: 'driver_accepted',
       })
       .eq('id', bookingId);
