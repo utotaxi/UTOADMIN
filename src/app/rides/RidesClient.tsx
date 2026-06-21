@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 import { fetchSingleRideAction } from './actions';
 import {
@@ -124,17 +125,46 @@ function getRideReference(ride: RideData): string {
   return ride.id.replace(/-/g, '').substring(0, 6).toUpperCase();
 }
 
+// Maps any raw cancellation reason to one of the three approved labels.
+function getCancellationReason(reason?: string): string {
+  const r = (reason || '').toLowerCase();
+  if (r.includes('no show') || r.includes('no-show') || r.includes('noshow') || r.includes('did not show') || r.includes("didn't show")) {
+    return 'Cancelled due to no show';
+  }
+  if (r.includes('driver')) return 'Cancelled by driver';
+  if (r.includes('rider') || r.includes('passenger') || r.includes('customer') || r.includes('user')) {
+    return 'Cancelled by rider';
+  }
+  // Default when no recognisable reason is recorded.
+  return 'Cancelled by rider';
+}
+
+// Returns the vehicle registration / number for a ride's assigned driver.
+function getVehicleNumber(ride: RideData): string {
+  return ride.driver?.license_plate || '—';
+}
+
 export default function RidesClient({ rides }: { rides: RideData[] }) {
   const [ridesList, setRidesList] = useState<RideData[]>(rides);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   // Sync internal state when the server component yields new data
   useEffect(() => {
     setRidesList(rides);
   }, [rides]);
+
+  // Safety-net polling: re-fetch server data periodically so ride statuses
+  // stay current even if the realtime websocket drops or isn't enabled.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      router.refresh();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [router]);
 
   // Real-time Postgres changes subscription
   useEffect(() => {
@@ -181,13 +211,11 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
         return label.toLowerCase() === statusFilter.toLowerCase();
       });
     }
+    // Order strictly by requested date & time (most recent first).
     return [...filtered].sort((a, b) => {
-      const aPriority = getDisplayStatus(a.status).priority;
-      const bPriority = getDisplayStatus(b.status).priority;
-      if (aPriority !== bPriority) return aPriority - bPriority;
-      const aTime = getRideTimestamp(a);
-      const bTime = getRideTimestamp(b);
-      return new Date(bTime).getTime() - new Date(aTime).getTime();
+      const aTime = new Date(getRideTimestamp(a)).getTime() || 0;
+      const bTime = new Date(getRideTimestamp(b)).getTime() || 0;
+      return bTime - aTime;
     });
   }, [ridesList, statusFilter]);
 
@@ -374,8 +402,7 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                 <th className="px-4 py-4 font-medium">Hirer (Rider)</th>
                 <th className="px-4 py-4 font-medium">Journey From</th>
                 <th className="px-4 py-4 font-medium">Journey To</th>
-                <th className="px-4 py-4 font-medium">Badge No.</th>
-                <th className="px-4 py-4 font-medium">Vehicle Plate</th>
+                <th className="px-4 py-4 font-medium">Vehicle Number</th>
                 <th className="px-4 py-4 font-medium">Payment</th>
                 <th className="px-4 py-4 font-medium">Amount</th>
               </tr>
@@ -412,20 +439,13 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                         </div>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="flex flex-col gap-1">
-                          <span className={cn(
-                            "inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold w-fit",
-                            getStatusBadgeStyles(ride.status)
-                          )}>
-                            {getStatusIcon(ride.status)}
-                            {display.label}
-                          </span>
-                          {ride.status === 'cancelled' && ride.cancellation_reason && (
-                            <span className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold max-w-[150px] truncate" title={ride.cancellation_reason}>
-                              Reason: {ride.cancellation_reason}
-                            </span>
-                          )}
-                        </div>
+                        <span className={cn(
+                          "inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold w-fit",
+                          getStatusBadgeStyles(ride.status)
+                        )}>
+                          {getStatusIcon(ride.status)}
+                          {display.label}
+                        </span>
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex flex-col">
@@ -471,13 +491,8 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                         </div>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap">
-                        <span className="text-xs font-mono font-medium">
-                          {ride.driver?.council_licence || '—'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 whitespace-nowrap">
                         <span className="text-xs font-mono font-medium tracking-wider bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded border uppercase">
-                          {ride.driver?.license_plate || '—'}
+                          {getVehicleNumber(ride)}
                         </span>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap">
@@ -500,9 +515,9 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                         <span className="font-semibold text-sm">
                           £{amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </span>
-                        {ride.status === 'cancelled' && ride.final_price ? (
-                          <span className="block text-[10px] text-rose-500 font-semibold">
-                            Cancellation Fee
+                        {ride.status === 'cancelled' ? (
+                          <span className="mt-1 block text-[10px] text-rose-600 dark:text-rose-400 font-semibold">
+                            {getCancellationReason(ride.cancellation_reason)}
                           </span>
                         ) : ride.final_price && ride.final_price !== ride.estimated_price ? (
                           <span className="block text-[10px] text-muted-foreground line-through font-mono">
@@ -515,7 +530,7 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                 })
               ) : (
                 <tr>
-                  <td colSpan={12} className="px-6 py-12 text-center text-muted-foreground">
+                  <td colSpan={11} className="px-6 py-12 text-center text-muted-foreground">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <AlertCircle className="w-8 h-8 opacity-50" />
                       <p>No trips found</p>
