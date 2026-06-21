@@ -101,6 +101,12 @@ export default async function ScheduledRidesPage() {
         (b: any) => new Date(b.pickup_at) <= now || ['cancelled', 'completed'].includes(b.status)
     ) || [];
 
+    // Table rows ordered by pickup date & time, most recent first
+    // (matches the ordering used on the Rides & Trips page).
+    const tableBookings = [...(bookings || [])].sort(
+        (a: any, b: any) => new Date(b.pickup_at).getTime() - new Date(a.pickup_at).getTime()
+    );
+
     const getStatusBadge = (status: string) => {
         switch (status) {
             case 'scheduled':
@@ -295,17 +301,19 @@ export default async function ScheduledRidesPage() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
-                                {bookings && bookings.length > 0 ? (
-                                    bookings.map((booking: any) => {
+                                {tableBookings.length > 0 ? (
+                                    tableBookings.map((booking: any) => {
                                         const isPast = new Date(booking.pickup_at) <= now;
                                         const isCancelled = booking.status === 'cancelled' || booking.status === 'cancelled_no_drivers';
-                                        const isExpired = booking.status === 'expired' || (isPast && booking.status === 'scheduled');
-                                        const shouldDim = isCancelled || isExpired;
+                                        const isCompleted = booking.status === 'completed';
+                                        const isExpired = booking.status === 'expired';
+                                        // Blur & dim rides whose pickup time has passed or that are cancelled.
+                                        const shouldDim = isPast || isCancelled || isCompleted || isExpired;
                                         return (
                                             <tr
                                                 key={booking.id}
                                                 className={`bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
-                                                    shouldDim ? 'opacity-50 dark:opacity-40' : ''
+                                                    shouldDim ? 'opacity-50 dark:opacity-40 blur-[1.1px] hover:blur-none hover:opacity-100 grayscale hover:grayscale-0' : ''
                                                 }`}
                                             >
                                                 <td className="px-6 py-4">
@@ -380,7 +388,7 @@ export default async function ScheduledRidesPage() {
                                     })
                                 ) : (
                                     <tr>
-                                        <td colSpan={7} className="px-6 py-16 text-center text-muted-foreground">
+                                        <td colSpan={8} className="px-6 py-16 text-center text-muted-foreground">
                                             <div className="flex flex-col items-center justify-center gap-3">
                                                 <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
                                                     <CalendarClock className="w-8 h-8 opacity-40" />
