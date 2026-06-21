@@ -35,9 +35,11 @@ function getVehicleLabel(vehicle: string, plate: string): string {
 export default function AssignDriverButton({
   bookingId,
   currentDriverName,
+  source = 'later',
 }: {
   bookingId: string;
   currentDriverName: string | null;
+  source?: 'later' | 'web_booker';
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -101,7 +103,7 @@ export default function AssignDriverButton({
 
   const handleAssign = async (driver: Driver) => {
     setAssigning(true);
-    const res = await manualAssignDriverToScheduled(bookingId, driver.id, driver.name);
+    const res = await manualAssignDriverToScheduled(bookingId, driver.id, driver.name, source);
     if (res.success) {
       setAssigned(driver.name);
       setOpen(false);

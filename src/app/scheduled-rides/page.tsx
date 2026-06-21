@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { format } from "date-fns";
+import Link from "next/link";
 import {
     MapPin,
     Clock,
@@ -11,14 +12,38 @@ import {
     UserCircle,
     ArrowRight,
     Timer,
+    Globe,
+    Pencil,
 } from "lucide-react";
 import AssignDriverButton from "./AssignDriverButton";
 
 export const dynamic = "force-dynamic";
 
+// Map web_booker statuses onto the scheduled-ride display statuses.
+function mapWebBookerStatus(status?: string): string {
+    switch (status) {
+        case 'driver_assigned':
+        case 'manual':
+        case 'driver_accepted':
+            return 'driver_accepted';
+        case 'completed':
+            return 'completed';
+        case 'cancelled':
+        case 'cancelled_no_drivers':
+            return 'cancelled';
+        case 'in_progress':
+            return 'in_progress';
+        case 'marketplace':
+        case 'searching_driver':
+        case 'pending':
+        default:
+            return 'scheduled';
+    }
+}
+
 export default async function ScheduledRidesPage() {
-    // Fetch bookings without FK joins (later_bookings has no FK constraints in schema)
-    const { data: rawBookings, error } = await supabaseAdmin
+    // Fetch app "Later" bookings (later_bookings has no FK constraints in schema)
+    const { data: laterBookings, error } = await supabaseAdmin
         .from('later_bookings')
         .select('*')
         .order('pickup_at', { ascending: true });
@@ -26,6 +51,37 @@ export default async function ScheduledRidesPage() {
     if (error) {
         console.error("Error fetching scheduled rides:", error);
     }
+
+    // Fetch admin/web-booker bookings so they appear here too.
+    const { data: webBookings, error: webError } = await supabaseAdmin
+        .from('web_booker')
+        .select('*')
+        .order('scheduled_time', { ascending: true });
+
+    if (webError) {
+        console.error("Error fetching web booker rides:", webError);
+    }
+
+    // Normalize web_booker rows into the unified scheduled-ride shape.
+    const normalizedWeb = (webBookings || []).map((b: any) => {
+        const pickupAt = b.scheduled_time || b.created_at;
+        const dropoffBy = b.dropoff_by
+            || (pickupAt ? new Date(new Date(pickupAt).getTime() + 30 * 60000).toISOString() : null);
+        return {
+            ...b,
+            source: 'web_booker',
+            pickup_at: pickupAt,
+            dropoff_by: dropoffBy,
+            estimated_fare: b.estimated_price ?? b.estimated_fare ?? b.final_price ?? 0,
+            driver_id: b.assigned_driver_id || null,
+            status: mapWebBookerStatus(b.status),
+        };
+    });
+
+    const normalizedLater = (laterBookings || []).map((b: any) => ({ ...b, source: 'later' }));
+
+    // Combined feed of both sources.
+    const rawBookings = [...normalizedLater, ...normalizedWeb];
 
     // Collect unique rider_id and driver_id values to look up names
     const riderIds = [...new Set((rawBookings || []).map((b: any) => b.rider_id || b.user_id).filter(Boolean))];
@@ -88,7 +144,7 @@ export default async function ScheduledRidesPage() {
         return {
             ...b,
             rider_name: riderMap[rId] || null,
-            driver_name: driverMap[dId] || null,
+            driver_name: driverMap[dId] || b.assigned_driver_name || null,
         };
     });
 
@@ -298,6 +354,7 @@ export default async function ScheduledRidesPage() {
                                     <th scope="col" className="px-6 py-4 font-medium">Dropoff By</th>
                                     <th scope="col" className="px-6 py-4 font-medium">Booked On</th>
                                     <th scope="col" className="px-6 py-4 font-medium">Fare</th>
+                                    <th scope="col" className="px-6 py-4 font-medium">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
@@ -318,6 +375,20 @@ export default async function ScheduledRidesPage() {
                                             >
                                                 <td className="px-6 py-4">
                                                     <div className="flex flex-col max-w-[250px]">
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            {booking.source === 'web_booker' ? (
+                                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-indigo-100 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
+                                                                    <Globe className="w-3 h-3" /> Web Booker
+                                                                </span>
+                                                            ) : (
+                                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                                                                    App
+                                                                </span>
+                                                            )}
+                                                            {booking.reference && (
+                                                                <span className="text-[10px] font-mono text-muted-foreground">#{booking.reference}</span>
+                                                            )}
+                                                        </div>
                                                         <div className="flex items-start gap-2 text-xs mb-2">
                                                             <MapPin className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
                                                             <span className="truncate" title={booking.pickup_address}>
@@ -341,7 +412,7 @@ export default async function ScheduledRidesPage() {
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4">
-                                                    <AssignDriverButton bookingId={booking.id} currentDriverName={booking.driver_name} />
+                                                    <AssignDriverButton bookingId={booking.id} currentDriverName={booking.driver_name} source={booking.source} />
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     {getStatusBadge(booking.status)}
@@ -383,12 +454,24 @@ export default async function ScheduledRidesPage() {
                                                 <td className="px-6 py-4 font-bold text-emerald-600 dark:text-emerald-400">
                                                     £{Number(booking.estimated_fare || booking.estimated_price || booking.final_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                 </td>
+                                                <td className="px-6 py-4">
+                                                    {booking.source === 'web_booker' ? (
+                                                        <Link
+                                                            href={`/web-booker/dashboard/${booking.id}`}
+                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                                                        >
+                                                            <Pencil className="w-3.5 h-3.5" /> Edit details
+                                                        </Link>
+                                                    ) : (
+                                                        <span className="text-xs text-muted-foreground">—</span>
+                                                    )}
+                                                </td>
                                             </tr>
                                         );
                                     })
                                 ) : (
                                     <tr>
-                                        <td colSpan={8} className="px-6 py-16 text-center text-muted-foreground">
+                                        <td colSpan={9} className="px-6 py-16 text-center text-muted-foreground">
                                             <div className="flex flex-col items-center justify-center gap-3">
                                                 <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
                                                     <CalendarClock className="w-8 h-8 opacity-40" />

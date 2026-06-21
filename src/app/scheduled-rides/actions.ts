@@ -36,24 +36,49 @@ export async function fetchAllDrivers() {
 }
 
 /**
- * Manually assign a driver to a scheduled ride (later_bookings table).
+ * Manually assign a driver to a scheduled ride.
+ * Handles both the app "Later" bookings (later_bookings) and admin web-booker
+ * bookings (web_booker), depending on the booking source.
  */
-export async function manualAssignDriverToScheduled(bookingId: string, driverId: string, driverName: string) {
+export async function manualAssignDriverToScheduled(
+  bookingId: string,
+  driverId: string,
+  driverName: string,
+  source: 'later' | 'web_booker' = 'later'
+) {
   try {
-    const { error } = await supabaseAdmin
-      .from('later_bookings')
-      .update({
-        driver_id: driverId,
-        status: 'driver_accepted',
-      })
-      .eq('id', bookingId);
+    if (source === 'web_booker') {
+      const { error } = await supabaseAdmin
+        .from('web_booker')
+        .update({
+          assigned_driver_id: driverId,
+          assigned_driver_name: driverName,
+          status: 'driver_assigned',
+          dispatch_mode: 'manual',
+          dispatch_note: `Manually assigned to ${driverName} by admin.`,
+        })
+        .eq('id', bookingId);
 
-    if (error) {
-      console.error("[ManualAssign] Failed to assign driver:", error);
-      return { success: false, error: error.message };
+      if (error) {
+        console.error("[ManualAssign] Failed to assign driver (web_booker):", error);
+        return { success: false, error: error.message };
+      }
+    } else {
+      const { error } = await supabaseAdmin
+        .from('later_bookings')
+        .update({
+          driver_id: driverId,
+          status: 'driver_accepted',
+        })
+        .eq('id', bookingId);
+
+      if (error) {
+        console.error("[ManualAssign] Failed to assign driver:", error);
+        return { success: false, error: error.message };
+      }
     }
 
-    console.log(`[ManualAssign] Driver ${driverName} manually assigned to scheduled ride ${bookingId}`);
+    console.log(`[ManualAssign] Driver ${driverName} manually assigned to ${source} ride ${bookingId}`);
     revalidatePath('/scheduled-rides');
     return { success: true };
   } catch (err: any) {
