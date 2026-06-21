@@ -121,8 +121,13 @@ function formatTime(dateStr: string | undefined): string {
 }
 
 function getRideReference(ride: RideData): string {
+  // Use the real reference from Supabase when present.
   if (ride.reference) return ride.reference.toUpperCase();
-  return ride.id.replace(/-/g, '').substring(0, 6).toUpperCase();
+  // Fallback: derive a unique code from the END of the id. Many ride ids look
+  // like `ride_<timestamp>`, so taking the first chars collapses everything to
+  // the same value (e.g. "RIDE_1"); the tail keeps each reference distinct.
+  const raw = (ride.id || '').replace(/[^a-zA-Z0-9]/g, '');
+  return raw ? raw.slice(-6).toUpperCase() : '—';
 }
 
 // Maps any raw cancellation reason to one of the three approved labels.
