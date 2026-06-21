@@ -7,11 +7,8 @@ import {
     CheckCircle2,
     XCircle,
     Car,
-    AlertCircle,
     CalendarClock,
     UserCircle,
-    ArrowRight,
-    Timer,
     Globe,
     Pencil,
 } from "lucide-react";
@@ -148,18 +145,17 @@ export default async function ScheduledRidesPage() {
         };
     });
 
-    // Separate into upcoming and past
     const now = new Date();
-    const upcomingBookings = bookings?.filter(
-        (b: any) => new Date(b.pickup_at) > now && !['cancelled', 'completed'].includes(b.status)
-    ) || [];
-    const pastBookings = bookings?.filter(
-        (b: any) => new Date(b.pickup_at) <= now || ['cancelled', 'completed'].includes(b.status)
-    ) || [];
+
+    // Completed and cancelled rides are moved to "Rides & Trips" (history), so
+    // the Scheduled Rides page only lists active (upcoming / in-progress) rides.
+    const activeBookings = (bookings || []).filter(
+        (b: any) => !['completed', 'cancelled', 'cancelled_no_drivers', 'expired'].includes(b.status)
+    );
 
     // Table rows ordered by pickup date & time, most recent first
     // (matches the ordering used on the Rides & Trips page).
-    const tableBookings = [...(bookings || [])].sort(
+    const tableBookings = [...activeBookings].sort(
         (a: any, b: any) => new Date(b.pickup_at).getTime() - new Date(a.pickup_at).getTime()
     );
 
@@ -204,10 +200,10 @@ export default async function ScheduledRidesPage() {
         }
     };
 
-    const totalBookings = bookings?.length || 0;
-    const scheduledCount = bookings?.filter((b: any) => b.status === 'scheduled').length || 0;
-    const acceptedCount = bookings?.filter((b: any) => b.status === 'driver_accepted').length || 0;
-    const cancelledCount = bookings?.filter((b: any) => b.status === 'cancelled').length || 0;
+    const totalBookings = activeBookings.length;
+    const scheduledCount = activeBookings.filter((b: any) => b.status === 'scheduled').length;
+    const acceptedCount = activeBookings.filter((b: any) => b.status === 'driver_accepted').length;
+    const inProgressCount = activeBookings.filter((b: any) => b.status === 'in_progress' || b.status === 'arrived' || b.status === 'started').length;
 
     return (
         <div className="flex flex-col gap-8 w-full">
@@ -244,99 +240,13 @@ export default async function ScheduledRidesPage() {
                 </div>
                 <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-5 glass hover:shadow-md transition-shadow">
                     <div className="flex items-center justify-between pb-2">
-                        <span className="text-sm font-medium text-muted-foreground">Cancelled</span>
-                        <XCircle className="h-4 w-4 text-rose-500" />
+                        <span className="text-sm font-medium text-muted-foreground">In Progress</span>
+                        <Car className="h-4 w-4 text-indigo-500" />
                     </div>
-                    <div className="text-2xl font-bold text-rose-600 dark:text-rose-400">{cancelledCount}</div>
-                    <p className="text-xs text-muted-foreground mt-1">Rides cancelled</p>
+                    <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">{inProgressCount}</div>
+                    <p className="text-xs text-muted-foreground mt-1">Currently on a trip</p>
                 </div>
             </div>
-
-            {/* Upcoming Rides */}
-            {upcomingBookings.length > 0 && (
-                <div className="flex flex-col gap-4">
-                    <div className="flex items-center gap-2">
-                        <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                        <h2 className="text-lg font-semibold text-foreground">Upcoming Rides ({upcomingBookings.length})</h2>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                        {upcomingBookings.map((booking: any) => (
-                            <div
-                                key={booking.id}
-                                className="rounded-xl border bg-card text-card-foreground shadow-sm p-5 glass hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5 group"
-                            >
-                                {/* Header: Status + Time */}
-                                <div className="flex items-center justify-between mb-4">
-                                    {getStatusBadge(booking.status)}
-                                    <span className="text-xs text-muted-foreground font-mono">
-                                        #{booking.id?.slice(0, 8)}
-                                    </span>
-                                </div>
-
-                                {/* Schedule Time */}
-                                <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-indigo-50/80 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40">
-                                    <CalendarClock className="w-5 h-5 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-bold text-indigo-700 dark:text-indigo-300">
-                                            {format(new Date(booking.pickup_at), 'EEE, dd MMM yyyy')}
-                                        </span>
-                                        <div className="flex items-center gap-1.5 text-xs text-indigo-600/80 dark:text-indigo-400/80">
-                                            <span className="font-semibold">{format(new Date(booking.pickup_at), 'HH:mm')}</span>
-                                            <ArrowRight className="w-3 h-3" />
-                                            <span className="font-semibold">{format(new Date(booking.dropoff_by), 'HH:mm')}</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Route */}
-                                <div className="flex gap-3 mb-4">
-                                    <div className="flex flex-col items-center pt-1">
-                                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20" />
-                                        <div className="w-0.5 flex-1 bg-gradient-to-b from-emerald-500/50 to-amber-500/50 my-1" />
-                                        <div className="w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-amber-500/20" />
-                                    </div>
-                                    <div className="flex flex-col gap-3 flex-1 min-w-0">
-                                        <div>
-                                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-0.5">Pickup</p>
-                                            <p className="text-sm font-medium text-foreground truncate" title={booking.pickup_address}>
-                                                {booking.pickup_address}
-                                            </p>
-                                        </div>
-                                        <div>
-                                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-0.5">Dropoff</p>
-                                            <p className="text-sm font-medium text-foreground truncate" title={booking.dropoff_address}>
-                                                {booking.dropoff_address}
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Rider Info & Fare */}
-                                <div className="flex items-center justify-between pt-3 border-t border-border/50">
-                                    <div className="flex items-center gap-2">
-                                        <UserCircle className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                                        <span className="text-xs font-medium text-muted-foreground truncate">
-                                            {booking.rider_name || 'Unknown Rider'}
-                                        </span>
-                                        {booking.driver_name && (
-                                            <>
-                                                <ArrowRight className="w-3 h-3 text-muted-foreground/50 flex-shrink-0" />
-                                                <Car className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                                                <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 truncate">
-                                                    {booking.driver_name}
-                                                </span>
-                                            </>
-                                        )}
-                                    </div>
-                                    <div className="text-sm font-bold text-emerald-600 dark:text-emerald-400 pl-2">
-                                        £{Number(booking.estimated_fare || booking.estimated_price || booking.final_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {/* All Rides Table */}
             <div className="flex flex-col gap-3">
