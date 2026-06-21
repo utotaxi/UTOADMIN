@@ -512,8 +512,13 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
     const filteredStats = useMemo(() => {
         const succeeded = filteredPayments.filter(p => p.status === "succeeded");
         const pending = filteredPayments.filter(p => p.status === "pending");
+        const cancellationEntries = filteredPayments.filter(p => p.entry_type === "cancellation");
+        const rideEntries = succeeded.filter(p => p.entry_type !== "cancellation");
         return {
             total: succeeded.reduce((s, p) => s + (p.amount || 0), 0),
+            rideTotal: rideEntries.reduce((s, p) => s + (p.amount || 0), 0),
+            cancellationTotal: cancellationEntries.reduce((s, p) => s + (p.amount || 0), 0),
+            cancellationCount: cancellationEntries.length,
             pending: pending.reduce((s, p) => s + (p.amount || 0), 0),
             count: filteredPayments.length,
             succeededCount: succeeded.length
@@ -730,6 +735,37 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                                         </div>
                                     </>
                                 )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Period total — shown prominently, especially when a date range is selected */}
+                    <div className={`px-5 py-3 border-b flex flex-wrap items-center justify-between gap-4 ${hasDateFilter ? "bg-indigo-50/60 dark:bg-indigo-950/20" : "bg-white dark:bg-slate-900/20"}`}>
+                        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                            <Wallet className="w-4 h-4" />
+                            {hasDateFilter ? (
+                                <span>
+                                    Total for selected period
+                                    <span className="ml-1 font-semibold text-foreground">
+                                        {dateFrom || "…"} → {dateTo || "…"}
+                                    </span>
+                                </span>
+                            ) : (
+                                <span>Total income (all activity)</span>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-5">
+                            <div className="flex flex-col items-end">
+                                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Ride income</span>
+                                <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">£{filteredStats.rideTotal.toFixed(2)}</span>
+                            </div>
+                            <div className="flex flex-col items-end">
+                                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Cancellation fees</span>
+                                <span className="text-sm font-bold text-rose-600 dark:text-rose-400">£{filteredStats.cancellationTotal.toFixed(2)}</span>
+                            </div>
+                            <div className="flex flex-col items-end border-l pl-5">
+                                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Total{filteredStats.count > 0 ? ` · ${filteredStats.count} entr${filteredStats.count === 1 ? "y" : "ies"}` : ""}</span>
+                                <span className="text-lg font-bold text-foreground">£{filteredStats.total.toFixed(2)}</span>
                             </div>
                         </div>
                     </div>

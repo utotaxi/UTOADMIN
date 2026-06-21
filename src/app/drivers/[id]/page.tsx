@@ -22,6 +22,37 @@ export const dynamic = "force-dynamic";
 // Staleness threshold — same as cleanup route
 const STALE_THRESHOLD_MINUTES = 2;
 
+// A cancelled ride debits a 50% cancellation fee, which is the driver's income
+// for that ride. Use the settled final_price when present, otherwise 50% of fare.
+function computeCancellationFee(ride: any): number {
+    const base = ride.estimated_price || ride.final_price || 0;
+    return Math.round(base * 0.5 * 100) / 100;
+}
+
+// Formats a cancellation reason as "who cancelled" + any extra detail recorded.
+function formatCancelledBy(raw?: string | null): string {
+    const r = (raw || "").toLowerCase();
+    let who: string;
+    if (r.includes("no show") || r.includes("no-show") || r.includes("noshow") || r.includes("did not show") || r.includes("didn't show")) {
+        who = "Cancelled due to no show";
+    } else if (r.includes("driver")) {
+        who = "Cancelled by driver";
+    } else if (r.includes("rider") || r.includes("passenger") || r.includes("customer") || r.includes("user")) {
+        who = "Cancelled by passenger";
+    } else {
+        who = "Cancelled";
+    }
+    const detail = (raw || "").trim();
+    if (detail && detail.toLowerCase() !== who.toLowerCase()) {
+        return `${who} — ${detail}`;
+    }
+    return who;
+}
+
+function isCancelledStatus(status?: string): boolean {
+    return status === "cancelled" || status === "cancelled_no_drivers";
+}
+
 export default async function DriverDetailsPage({ params }: { params: Promise<{ id: string }> }) {
     const resolvedParams = await params;
     const driverId = resolvedParams.id;
@@ -91,13 +122,13 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
     const paymentRideIds = new Set(driverPayments.map(p => p.ride_id));
     const cancellationEntries = (allDriverRides || [])
         .filter((r: any) =>
-            (r.status === 'cancelled' || r.status === 'cancelled_no_drivers') &&
-            (r.final_price || 0) > 0 &&
+            isCancelledStatus(r.status) &&
+            computeCancellationFee(r) > 0 &&
             !paymentRideIds.has(r.id)
         )
         .map((r: any) => ({
             id: `cancel-${r.id}`,
-            amount: r.final_price || 0,
+            amount: computeCancellationFee(r),
             status: 'succeeded',
             currency: 'gbp',
             payment_method: 'cancellation_fee',
@@ -302,7 +333,10 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
 
                         <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-4">
                             {rides && rides.length > 0 ? (
-                                rides.map((ride: any) => (
+                                rides.map((ride: any) => {
+                                    const cancelled = isCancelledStatus(ride.status);
+                                    const fee = cancelled ? computeCancellationFee(ride) : (ride.final_price || ride.estimated_price || 0);
+                                    return (
                                     <div key={ride.id} className="p-4 rounded-lg border bg-slate-50/50 dark:bg-slate-900/50 flex flex-col sm:flex-row gap-4 justify-between sm:items-center">
                                         <div className="flex flex-col flex-1 max-w-[280px]">
                                             <span className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
@@ -316,19 +350,29 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
                                                 <MapPin className="w-4 h-4 text-rose-500 mt-0.5 flex-shrink-0" />
                                                 <span className="truncate" title={ride.dropoff_address}>{ride.dropoff_address}</span>
                                             </div>
+                                            {cancelled && (
+                                                <div className="flex items-start gap-1.5 mt-2 text-[11px] text-rose-600 dark:text-rose-400 font-semibold">
+                                                    <Ban className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                                                    <span>{formatCancelledBy(ride.cancellation_reason)}</span>
+                                                </div>
+                                            )}
                                         </div>
 
                                         <div className="flex flex-col sm:items-end gap-1">
                                             <span className="text-xs text-muted-foreground">Rider: {ride.rider?.full_name || 'Unknown'}</span>
-                                            <span className="font-bold text-lg text-emerald-600 dark:text-emerald-400">
-                                                +£{(ride.final_price || ride.estimated_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            <span className={`font-bold text-lg ${cancelled ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                                +£{fee.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                             </span>
-                                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-200 dark:bg-slate-800 uppercase tracking-wider">
+                                            {cancelled && (
+                                                <span className="text-[10px] text-muted-foreground">Cancellation fee (50%)</span>
+                                            )}
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${cancelled ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' : 'bg-slate-200 dark:bg-slate-800'}`}>
                                                 {ride.status}
                                             </span>
                                         </div>
                                     </div>
-                                ))
+                                    );
+                                })
                             ) : (
                                 <div className="h-full flex flex-col items-center justify-center text-muted-foreground flex-1">
                                     <CarTaxiFront className="w-8 h-8 opacity-20 mb-3" />
