@@ -2,56 +2,21 @@
 
 import { supabaseAdmin } from "@/lib/supabase";
 
-const BASE_RIDE_COLUMNS = `
-    id,
-    status,
-    pickup_address,
-    dropoff_address,
-    requested_at,
-    created_at,
-    accepted_at,
-    started_at,
-    completed_at,
-    cancelled_at,
-    estimated_price,
-    final_price,
-    payment_status,
-    vehicle_type,
-    cancellation_reason,
-    rider:rider_id(full_name, phone, email),
-    driver:driver_id(
-        council_licence,
-        license_plate,
-        vehicle_type,
-        vehicle_make,
-        vehicle_model,
-        user:user_id(full_name, phone, email)
-    ),
-    payments(payment_method, status)
-`;
-
 export async function fetchSingleRideAction(rideId: string) {
   try {
-    // Prefer the real `reference` column; retry without it if it doesn't exist.
-    const primary = await supabaseAdmin
+    // `*` pulls all available ride columns (reference, passenger_count,
+    // cancellation_reason, etc.) without erroring on missing columns. The
+    // driver embed uses `*` to include council/PHD & PHV licence + expiries.
+    const { data: ride, error } = await supabaseAdmin
       .from('rides')
-      .select(`reference, ${BASE_RIDE_COLUMNS}`)
+      .select(`
+          *,
+          rider:rider_id(full_name, phone, email),
+          driver:driver_id(*, user:user_id(full_name, phone, email)),
+          payments(payment_method, status)
+      `)
       .eq('id', rideId)
       .single();
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let ride: any = primary.data;
-    let error = primary.error;
-
-    if (error) {
-      const fallback = await supabaseAdmin
-        .from('rides')
-        .select(BASE_RIDE_COLUMNS)
-        .eq('id', rideId)
-        .single();
-      ride = fallback.data;
-      error = fallback.error;
-    }
 
     if (error) {
       console.error("[fetchSingleRideAction] Error fetching ride:", error);

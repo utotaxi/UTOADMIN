@@ -34,6 +34,9 @@ type Payment = {
     payment_method?: string;
     created_at: string;
     ride_id: string;
+    entry_type?: "payment" | "cancellation";
+    cancellation_reason?: string | null;
+    ride_status?: string;
     user?: {
         full_name?: string;
         email?: string;
@@ -104,6 +107,26 @@ function getPaymentStatusIcon(status: string) {
         case "pending": return <Clock className="w-3 h-3" />;
         default: return null;
     }
+}
+
+// Formats a cancellation reason as "who cancelled" + any extra detail recorded.
+function formatCancellationReason(raw?: string | null): string {
+    const r = (raw || "").toLowerCase();
+    let who: string;
+    if (r.includes("no show") || r.includes("no-show") || r.includes("noshow") || r.includes("did not show") || r.includes("didn't show")) {
+        who = "Cancelled due to no show";
+    } else if (r.includes("driver")) {
+        who = "Cancelled by driver";
+    } else if (r.includes("rider") || r.includes("passenger") || r.includes("customer") || r.includes("user")) {
+        who = "Cancelled by passenger";
+    } else {
+        who = "Cancelled";
+    }
+    const detail = (raw || "").trim();
+    if (detail && detail.toLowerCase() !== who.toLowerCase()) {
+        return `${who} — ${detail}`;
+    }
+    return who;
 }
 
 function getWeekStart(d: Date): string {
@@ -185,10 +208,11 @@ function generateCSV(
     lines.push(`TOTAL,${payments.length},${grandTotal.toFixed(2)},,,`);
     lines.push("");
     lines.push("DETAILED TRANSACTIONS");
-    lines.push("Date,Time,Rider,Rider Email,Pickup,Dropoff,Amount (GBP),Status,Payment Method");
+    lines.push("Date,Time,Rider,Rider Email,Pickup,Dropoff,Amount (GBP),Status,Payment Method,Type / Cancellation Reason");
     payments.forEach(p => {
         const ride = rideMap[p.ride_id];
         const date = new Date(p.created_at);
+        const isCancellation = p.entry_type === "cancellation";
         lines.push([
             date.toLocaleDateString("en-CA"),
             date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
@@ -197,8 +221,9 @@ function generateCSV(
             escapeCsvField(ride?.pickup_address || "-"),
             escapeCsvField(ride?.dropoff_address || "-"),
             (p.amount || 0).toFixed(2),
-            p.status,
-            (p.payment_method || "card").replace(/_/g, " ")
+            isCancellation ? "cancelled" : p.status,
+            isCancellation ? "cancellation fee" : (p.payment_method || "card").replace(/_/g, " "),
+            escapeCsvField(isCancellation ? formatCancellationReason(p.cancellation_reason) : "Ride payment")
         ].join(","));
     });
     return lines.join("\r\n");
@@ -741,7 +766,7 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                                                 </td>
                                                 <td className="px-5 py-3.5">
                                                     {linkedRide ? (
-                                                        <div className="flex flex-col gap-0.5 max-w-[180px]">
+                                                        <div className="flex flex-col gap-0.5 max-w-[200px]">
                                                             <span className="text-[10px] flex items-center gap-1 truncate">
                                                                 <MapPin className="w-2.5 h-2.5 text-emerald-500 flex-shrink-0" />
                                                                 <span className="truncate">{linkedRide.pickup_address}</span>
@@ -750,7 +775,18 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                                                                 <MapPin className="w-2.5 h-2.5 text-rose-500 flex-shrink-0" />
                                                                 <span className="truncate">{linkedRide.dropoff_address}</span>
                                                             </span>
+                                                            {payment.entry_type === "cancellation" && (
+                                                                <span className="text-[10px] flex items-center gap-1 text-rose-600 dark:text-rose-400 font-semibold mt-0.5">
+                                                                    <AlertTriangle className="w-2.5 h-2.5 flex-shrink-0" />
+                                                                    {formatCancellationReason(payment.cancellation_reason)}
+                                                                </span>
+                                                            )}
                                                         </div>
+                                                    ) : payment.entry_type === "cancellation" ? (
+                                                        <span className="text-[10px] flex items-center gap-1 text-rose-600 dark:text-rose-400 font-semibold">
+                                                            <AlertTriangle className="w-2.5 h-2.5 flex-shrink-0" />
+                                                            {formatCancellationReason(payment.cancellation_reason)}
+                                                        </span>
                                                     ) : (
                                                         <span className="text-[10px] text-muted-foreground">—</span>
                                                     )}
@@ -759,16 +795,27 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                                                     <span className="font-bold text-emerald-600 dark:text-emerald-400">
                                                         £{(payment.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                                     </span>
-                                                    <div className="text-[10px] text-muted-foreground uppercase">{payment.currency || "gbp"}</div>
+                                                    <div className="text-[10px] text-muted-foreground uppercase">
+                                                        {payment.entry_type === "cancellation" ? "Cancellation fee" : (payment.currency || "gbp")}
+                                                    </div>
                                                 </td>
                                                 <td className="px-5 py-3.5">
-                                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getPaymentStatusStyle(payment.status)}`}>
-                                                        {getPaymentStatusIcon(payment.status)}
-                                                        {payment.status}
-                                                    </span>
+                                                    {payment.entry_type === "cancellation" ? (
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 border-rose-200 dark:border-rose-800">
+                                                            <XCircle className="w-3 h-3" />
+                                                            Cancelled
+                                                        </span>
+                                                    ) : (
+                                                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getPaymentStatusStyle(payment.status)}`}>
+                                                            {getPaymentStatusIcon(payment.status)}
+                                                            {payment.status}
+                                                        </span>
+                                                    )}
                                                 </td>
                                                 <td className="px-5 py-3.5 text-xs text-muted-foreground capitalize">
-                                                    {payment.payment_method?.replace("_", " ") || "card"}
+                                                    {payment.entry_type === "cancellation"
+                                                        ? "Cancellation fee"
+                                                        : (payment.payment_method?.replace("_", " ") || "card")}
                                                 </td>
                                             </tr>
                                         );

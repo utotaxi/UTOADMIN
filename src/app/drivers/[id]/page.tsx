@@ -54,10 +54,11 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
         .order('requested_at', { ascending: false })
         .limit(10);
 
-    // Fetch ALL rides for this driver (to get ride IDs for payment lookup)
+    // Fetch ALL rides for this driver (to get ride IDs for payment lookup).
+    // `*` pulls every available column (cancellation_reason, cancelled_at, etc.).
     const { data: allDriverRides } = await supabaseAdmin
         .from('rides')
-        .select('id, final_price, estimated_price, status, payment_status, pickup_address, dropoff_address, requested_at, rider:rider_id(full_name)')
+        .select('*, rider:rider_id(full_name)')
         .eq('driver_id', driverId);
 
     // Get all ride IDs for this driver
@@ -82,6 +83,42 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
         .order('created_at', { ascending: false });
     const deductions: Deduction[] = (deductionsData || []) as Deduction[];
 
+    // ── Cancellation-fee income ──────────────────────────────────────────────
+    // When a ride is cancelled the driver is still credited a cancellation fee
+    // (typically 50% of the fare). These don't always have a `payments` row, so
+    // we synthesize income entries from the cancelled rides themselves so ALL
+    // income activity is reflected — including who cancelled and why.
+    const paymentRideIds = new Set(driverPayments.map(p => p.ride_id));
+    const cancellationEntries = (allDriverRides || [])
+        .filter((r: any) =>
+            (r.status === 'cancelled' || r.status === 'cancelled_no_drivers') &&
+            (r.final_price || 0) > 0 &&
+            !paymentRideIds.has(r.id)
+        )
+        .map((r: any) => ({
+            id: `cancel-${r.id}`,
+            amount: r.final_price || 0,
+            status: 'succeeded',
+            currency: 'gbp',
+            payment_method: 'cancellation_fee',
+            created_at: r.cancelled_at || r.requested_at || r.created_at,
+            ride_id: r.id,
+            entry_type: 'cancellation',
+            cancellation_reason: r.cancellation_reason || null,
+            ride_status: r.status,
+            user: { full_name: r.rider?.full_name || 'Unknown' },
+        }));
+
+    // Combined income feed: real payments + synthesized cancellation fees.
+    const incomeEntries = [
+        ...driverPayments.map((p: any) => ({ ...p, entry_type: 'payment' })),
+        ...cancellationEntries,
+    ].sort((a: any, b: any) =>
+        new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+
+    const cancellationFeesTotal = cancellationEntries.reduce((sum, e) => sum + (e.amount || 0), 0);
+
     // Calculate income from payments table
     const succeededPayments = driverPayments.filter(p => p.status === 'succeeded');
     const pendingPayments = driverPayments.filter(p => p.status === 'pending');
@@ -100,8 +137,9 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
     );
     const totalEarningsFromRides = completedPaidRides.reduce((sum, r) => sum + (r.final_price || r.estimated_price || 0), 0);
 
-    // Use the higher of the two (payments table is the source of truth if available, otherwise use rides)
-    const totalEarnings = totalEarnedFromPayments > 0 ? totalEarnedFromPayments : totalEarningsFromRides;
+    // Use the higher of the two (payments table is the source of truth if
+    // available, otherwise use rides) and always add cancellation-fee income.
+    const totalEarnings = (totalEarnedFromPayments > 0 ? totalEarnedFromPayments : totalEarningsFromRides) + cancellationFeesTotal;
     const effectiveIncome = Math.max(0, totalEarnings - totalDeductions);
 
     // Build a map of ride_id -> ride details for the payment history
@@ -251,7 +289,7 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
 
                     {/* Payment History from Supabase */}
                     <DriverIncomePanel
-                        payments={JSON.parse(JSON.stringify(driverPayments))}
+                        payments={JSON.parse(JSON.stringify(incomeEntries))}
                         rideMap={JSON.parse(JSON.stringify(rideMap))}
                         driverInfo={driverInfo}
                         driverId={driverId}

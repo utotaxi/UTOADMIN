@@ -48,6 +48,10 @@ interface RideData {
     vehicle_type?: string;
     vehicle_make?: string;
     vehicle_model?: string;
+    phd_number?: string;
+    phv_number?: string;
+    document_phdl_expiry?: string;
+    document_phvl_expiry?: string;
     user?: { full_name: string; phone?: string; email?: string } | null;
   } | null;
   payments?: { payment_method: string; status: string }[] | null;
@@ -148,6 +152,47 @@ function getCancellationReason(reason?: string): string {
 // Returns the vehicle registration / number for a ride's assigned driver.
 function getVehicleNumber(ride: RideData): string {
   return ride.driver?.license_plate || '—';
+}
+
+// "YYYY-MM-DD HH:mm" formatting for the council report.
+function formatReportDateTime(dateStr: string | undefined): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  const date = d.toLocaleDateString('en-CA'); // YYYY-MM-DD
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${date} ${time}`;
+}
+
+// Number of passengers for the report (falls back to vehicle type if absent).
+function getPassengers(ride: RideData): string {
+  if (ride.passenger_count != null && !Number.isNaN(Number(ride.passenger_count))) {
+    return String(ride.passenger_count);
+  }
+  return ride.vehicle_type || '';
+}
+
+// PHD = Private Hire Driver licence (the driver's council/PHD badge number).
+function getPHD(ride: RideData): string {
+  return ride.driver?.phd_number || ride.driver?.council_licence || '';
+}
+
+// PHV = Private Hire Vehicle: the vehicle plate plus its PHV licence number
+// and/or expiry, e.g. "HK67SYS - 428/19.08.2026".
+function getPHV(ride: RideData): string {
+  const plate = ride.driver?.license_plate || '';
+  const number = ride.driver?.phv_number || '';
+  const expiryRaw = ride.driver?.document_phvl_expiry;
+  let expiry = '';
+  if (expiryRaw) {
+    const d = new Date(expiryRaw);
+    expiry = isNaN(d.getTime())
+      ? String(expiryRaw)
+      : d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+  const detail = [number, expiry].filter(Boolean).join('/');
+  if (plate && detail) return `${plate} - ${detail}`;
+  return plate || detail || '';
 }
 
 export default function RidesClient({ rides }: { rides: RideData[] }) {
@@ -312,54 +357,30 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
     const ridesToExport = sortedAndFilteredRides.filter(r => selectedIds.has(r.id));
     if (ridesToExport.length === 0) return;
 
+    // Report format requested by the client: identifies the driver by their
+    // PHD (Private Hire Driver) licence and the vehicle by its PHV licence.
     const headers = [
-      'Reference',
-      'Date',
-      'Time',
-      'Status',
-      'Journey From',
-      'Journey To',
-      'Hirer (Rider)',
-      'Rider Phone',
       'Driver',
-      'Driver Phone',
-      'Badge No.',
-      'Vehicle Plate',
-      'Vehicle Type',
-      'Payment Method',
-      'Payment Status',
-      'Amount (£)',
-      'Completed At',
-      'Cancelled At',
+      'Reference',
+      'Requested time',
+      'Passengers',
+      'Pick-up address',
+      'Drop-off address',
+      'PHD',
+      'PHV',
     ];
 
     const rows = ridesToExport.map(ride => {
-      const ts = getRideTimestamp(ride);
-      const amountValue = ride.status === 'cancelled'
-        ? (ride.final_price || 0)
-        : (ride.final_price || ride.estimated_price || 0);
-      const amount = amountValue.toFixed(2);
       const esc = (s: string) => `"${(s || '').replace(/"/g, '""')}"`;
-      const pMethod = ride.payment_method || (ride as any).payments?.[0]?.payment_method || '';
       return [
+        esc(ride.driver?.user?.full_name || 'Unassigned'),
         esc(getRideReference(ride)),
-        esc(formatDate(ts)),
-        esc(formatTime(ts)),
-        esc(getDisplayStatus(ride.status).label),
+        esc(formatReportDateTime(getRideTimestamp(ride))),
+        esc(getPassengers(ride)),
         esc(ride.pickup_address || ''),
         esc(ride.dropoff_address || ''),
-        esc(ride.rider?.full_name || 'Unknown'),
-        esc(ride.rider?.phone || ''),
-        esc(ride.driver?.user?.full_name || 'Unassigned'),
-        esc(ride.driver?.user?.phone || ''),
-        esc(ride.driver?.council_licence || ''),
-        esc(ride.driver?.license_plate || ''),
-        esc(ride.vehicle_type || ride.driver?.vehicle_type || ''),
-        esc(pMethod),
-        esc(ride.payment_status || ''),
-        amount,
-        esc(ride.completed_at ? `${formatDate(ride.completed_at)} ${formatTime(ride.completed_at)}` : ''),
-        esc(ride.cancelled_at ? `${formatDate(ride.cancelled_at)} ${formatTime(ride.cancelled_at)}` : ''),
+        esc(getPHD(ride)),
+        esc(getPHV(ride)),
       ];
     });
 
