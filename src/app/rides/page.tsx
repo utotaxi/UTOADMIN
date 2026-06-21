@@ -35,19 +35,25 @@ const BASE_RIDE_COLUMNS = `
 export default async function RidesPage() {
     // Prefer the real `reference` column from Supabase; if it doesn't exist
     // on this schema the query errors, so we transparently retry without it.
-    let { data: rides, error } = await supabaseAdmin
+    const primary = await supabaseAdmin
         .from('rides')
         .select(`reference, ${BASE_RIDE_COLUMNS}`)
         .order('requested_at', { ascending: false })
         .limit(1000);
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let rides: any[] | null = primary.data;
+    let error = primary.error;
+
     if (error) {
         console.warn("[RidesPage] reference column unavailable, retrying without it:", error.message);
-        ({ data: rides, error } = await supabaseAdmin
+        const fallback = await supabaseAdmin
             .from('rides')
             .select(BASE_RIDE_COLUMNS)
             .order('requested_at', { ascending: false })
-            .limit(1000));
+            .limit(1000);
+        rides = fallback.data;
+        error = fallback.error;
     }
 
     if (error) {

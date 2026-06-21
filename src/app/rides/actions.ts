@@ -33,18 +33,24 @@ const BASE_RIDE_COLUMNS = `
 export async function fetchSingleRideAction(rideId: string) {
   try {
     // Prefer the real `reference` column; retry without it if it doesn't exist.
-    let { data: ride, error } = await supabaseAdmin
+    const primary = await supabaseAdmin
       .from('rides')
       .select(`reference, ${BASE_RIDE_COLUMNS}`)
       .eq('id', rideId)
       .single();
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let ride: any = primary.data;
+    let error = primary.error;
+
     if (error) {
-      ({ data: ride, error } = await supabaseAdmin
+      const fallback = await supabaseAdmin
         .from('rides')
         .select(BASE_RIDE_COLUMNS)
         .eq('id', rideId)
-        .single());
+        .single();
+      ride = fallback.data;
+      error = fallback.error;
     }
 
     if (error) {

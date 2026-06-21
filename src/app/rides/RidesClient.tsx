@@ -187,14 +187,15 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
           } else if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
             const res = await fetchSingleRideAction(payload.new.id);
             if (res.success && res.ride) {
+              const updatedRide = res.ride;
               setRidesList((prev) => {
-                const index = prev.findIndex((r) => r.id === res.ride.id);
+                const index = prev.findIndex((r) => r.id === updatedRide.id);
                 if (index !== -1) {
                   const next = [...prev];
-                  next[index] = res.ride as any;
+                  next[index] = updatedRide as any;
                   return next;
                 } else {
-                  return [res.ride as any, ...prev];
+                  return [updatedRide as any, ...prev];
                 }
               });
             }
