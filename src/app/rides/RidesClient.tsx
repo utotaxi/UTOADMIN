@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 import { fetchSingleRideAction } from './actions';
@@ -13,11 +13,12 @@ import {
   AlertCircle,
   Download,
   Filter,
-  ChevronDown,
   CheckSquare,
   Square,
   Users as UsersIcon,
   CreditCard,
+  Search,
+  RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -153,8 +154,12 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
   const [ridesList, setRidesList] = useState<RideData[]>(rides);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-  const filterRef = useRef<HTMLDivElement>(null);
+  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'yesterday' | 'week' | 'custom'>('all');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [cancellationFilter, setCancellationFilter] = useState<'all' | 'driver' | 'rider' | 'no_show'>('all');
+  const [driverQuery, setDriverQuery] = useState('');
+  const [passengerQuery, setPassengerQuery] = useState('');
   const router = useRouter();
 
   // Sync internal state when the server component yields new data
@@ -210,20 +215,82 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
   }, []);
 
   const sortedAndFilteredRides = useMemo(() => {
-    let filtered = ridesList;
-    if (statusFilter !== 'all') {
-      filtered = ridesList.filter(r => {
+    const driverQ = driverQuery.trim().toLowerCase();
+    const passengerQ = passengerQuery.trim().toLowerCase();
+
+    // Pre-compute date boundaries once.
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfTomorrow = new Date(startOfToday); startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+    const startOfYesterday = new Date(startOfToday); startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    // Start of this week (Monday).
+    const mondayOffset = (startOfToday.getDay() + 6) % 7;
+    const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfWeek.getDate() - mondayOffset);
+    const customStartDate = customStart ? new Date(`${customStart}T00:00:00`) : null;
+    const customEndDate = customEnd ? new Date(`${customEnd}T23:59:59`) : null;
+
+    const filtered = ridesList.filter(r => {
+      // Status filter
+      if (statusFilter !== 'all') {
         const { label } = getDisplayStatus(r.status);
-        return label.toLowerCase() === statusFilter.toLowerCase();
-      });
-    }
+        if (label.toLowerCase() !== statusFilter.toLowerCase()) return false;
+      }
+
+      // Cancellation reason filter (implies cancelled rides only)
+      if (cancellationFilter !== 'all') {
+        if (r.status !== 'cancelled') return false;
+        const reason = getCancellationReason(r.cancellation_reason);
+        if (cancellationFilter === 'driver' && reason !== 'Cancelled by driver') return false;
+        if (cancellationFilter === 'rider' && reason !== 'Cancelled by rider') return false;
+        if (cancellationFilter === 'no_show' && reason !== 'Cancelled due to no show') return false;
+      }
+
+      // Driver name filter
+      if (driverQ && !(r.driver?.user?.full_name || '').toLowerCase().includes(driverQ)) return false;
+
+      // Passenger name filter
+      if (passengerQ && !(r.rider?.full_name || '').toLowerCase().includes(passengerQ)) return false;
+
+      // Date filter
+      if (dateFilter !== 'all') {
+        const t = new Date(getRideTimestamp(r));
+        if (isNaN(t.getTime())) return false;
+        if (dateFilter === 'today' && !(t >= startOfToday && t < startOfTomorrow)) return false;
+        if (dateFilter === 'yesterday' && !(t >= startOfYesterday && t < startOfToday)) return false;
+        if (dateFilter === 'week' && !(t >= startOfWeek && t < startOfTomorrow)) return false;
+        if (dateFilter === 'custom') {
+          if (customStartDate && t < customStartDate) return false;
+          if (customEndDate && t > customEndDate) return false;
+        }
+      }
+
+      return true;
+    });
+
     // Order strictly by requested date & time (most recent first).
     return [...filtered].sort((a, b) => {
       const aTime = new Date(getRideTimestamp(a)).getTime() || 0;
       const bTime = new Date(getRideTimestamp(b)).getTime() || 0;
       return bTime - aTime;
     });
-  }, [ridesList, statusFilter]);
+  }, [ridesList, statusFilter, dateFilter, customStart, customEnd, cancellationFilter, driverQuery, passengerQuery]);
+
+  const hasActiveFilters =
+    statusFilter !== 'all' ||
+    dateFilter !== 'all' ||
+    cancellationFilter !== 'all' ||
+    driverQuery.trim() !== '' ||
+    passengerQuery.trim() !== '';
+
+  const clearFilters = () => {
+    setStatusFilter('all');
+    setDateFilter('all');
+    setCustomStart('');
+    setCustomEnd('');
+    setCancellationFilter('all');
+    setDriverQuery('');
+    setPassengerQuery('');
+  };
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
@@ -329,34 +396,6 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
           <p className="text-muted-foreground text-sm">Monitor live trips, view history, and generate council reports.</p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Status filter */}
-          <div className="relative" ref={filterRef}>
-            <button
-              onClick={() => setShowFilterDropdown(!showFilterDropdown)}
-              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border rounded-lg bg-card hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-            >
-              <Filter className="w-4 h-4 text-muted-foreground" />
-              {statusFilter === 'all' ? 'All Statuses' : statusFilter}
-              <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-            </button>
-            {showFilterDropdown && (
-              <div className="absolute right-0 mt-2 w-48 rounded-xl border bg-card shadow-lg z-20 overflow-hidden">
-                {statusOptions.map(opt => (
-                  <button
-                    key={opt}
-                    onClick={() => { setStatusFilter(opt); setShowFilterDropdown(false); }}
-                    className={cn(
-                      "block w-full text-left px-4 py-2.5 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-800",
-                      statusFilter === opt ? "font-semibold text-primary bg-primary/5" : "text-foreground"
-                    )}
-                  >
-                    {opt === 'all' ? 'All Statuses' : opt}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
           {/* Download Report */}
           <button
             onClick={downloadCSV}
@@ -388,6 +427,127 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
             <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">{stat.label}</span>
           </div>
         ))}
+      </div>
+
+      {/* Filters */}
+      <div className="bg-card border rounded-xl p-4 shadow-sm flex flex-col gap-3">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <Filter className="w-3.5 h-3.5" />
+          Filters
+          <span className="normal-case font-medium text-muted-foreground/70">
+            ({sortedAndFilteredRides.length} of {ridesList.length})
+          </span>
+          {hasActiveFilters && (
+            <button
+              onClick={clearFilters}
+              className="ml-auto flex items-center gap-1 text-primary hover:underline normal-case font-medium"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Clear all
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+          {/* Date */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Date</label>
+            <select
+              value={dateFilter}
+              onChange={e => setDateFilter(e.target.value as typeof dateFilter)}
+              className="h-9 rounded-lg border bg-card px-3 text-sm font-medium text-foreground outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+            >
+              <option value="all">All time</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="week">This week</option>
+              <option value="custom">Custom range</option>
+            </select>
+          </div>
+
+          {/* Status */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Status</label>
+            <select
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value)}
+              className="h-9 rounded-lg border bg-card px-3 text-sm font-medium text-foreground outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+            >
+              {statusOptions.map(opt => (
+                <option key={opt} value={opt}>{opt === 'all' ? 'All statuses' : opt}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Cancellation reason */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Cancellation reason</label>
+            <select
+              value={cancellationFilter}
+              onChange={e => setCancellationFilter(e.target.value as typeof cancellationFilter)}
+              className="h-9 rounded-lg border bg-card px-3 text-sm font-medium text-foreground outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+            >
+              <option value="all">Any reason</option>
+              <option value="driver">Cancelled by driver</option>
+              <option value="rider">Cancelled by passenger</option>
+              <option value="no_show">Cancelled due to no show</option>
+            </select>
+          </div>
+
+          {/* Driver name */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Driver name</label>
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                value={driverQuery}
+                onChange={e => setDriverQuery(e.target.value)}
+                placeholder="Search driver..."
+                className="h-9 w-full rounded-lg border bg-card pl-8 pr-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+          </div>
+
+          {/* Passenger name */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Passenger name</label>
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                value={passengerQuery}
+                onChange={e => setPassengerQuery(e.target.value)}
+                placeholder="Search passenger..."
+                className="h-9 w-full rounded-lg border bg-card pl-8 pr-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Custom date range */}
+        {dateFilter === 'custom' && (
+          <div className="flex flex-wrap items-end gap-3 pt-1 border-t border-border/50 mt-1">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">From</label>
+              <input
+                type="date"
+                value={customStart}
+                onChange={e => setCustomStart(e.target.value)}
+                className="h-9 rounded-lg border bg-card px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">To</label>
+              <input
+                type="date"
+                value={customEnd}
+                onChange={e => setCustomEnd(e.target.value)}
+                className="h-9 rounded-lg border bg-card px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -540,12 +700,12 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                     <div className="flex flex-col items-center justify-center gap-2">
                       <AlertCircle className="w-8 h-8 opacity-50" />
                       <p>No trips found</p>
-                      {statusFilter !== 'all' && (
+                      {hasActiveFilters && (
                         <button
-                          onClick={() => setStatusFilter('all')}
+                          onClick={clearFilters}
                           className="text-xs text-primary hover:underline mt-1"
                         >
-                          Show all statuses
+                          Clear all filters
                         </button>
                       )}
                     </div>
