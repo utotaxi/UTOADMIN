@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { forgotPasswordAction } from "../actions";
-import { ShieldCheck, Mail, Loader2, CheckCircle2, ArrowLeft, Lock } from "lucide-react";
+import { ShieldCheck, Mail, Loader2, CheckCircle2, ArrowLeft, Lock, Eye, EyeOff } from "lucide-react";
 
 export default function ForgotPasswordPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   async function handleSubmit(formData: FormData) {
@@ -38,7 +40,7 @@ export default function ForgotPasswordPage() {
             </div>
             <h1 className="text-3xl font-bold text-white tracking-tight">Reset Password</h1>
             <p className="text-slate-400 mt-2 text-sm">
-              Enter your admin email and we&apos;ll send you a link to set a new password.
+              Enter your admin email and choose a new password to sign in again.
             </p>
           </div>
 
@@ -82,6 +84,62 @@ export default function ForgotPasswordPage() {
                 </div>
               </div>
 
+              <div className="space-y-2">
+                <label htmlFor="password" className="text-sm font-medium text-slate-300">
+                  New Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                  <input
+                    id="password"
+                    name="password"
+                    type={showPassword ? "text" : "password"}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    placeholder="At least 8 characters"
+                    disabled={isPending || !!success}
+                    className="w-full h-12 pl-11 pr-12 rounded-xl bg-white/[0.06] border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all duration-200 disabled:opacity-50 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="confirmPassword" className="text-sm font-medium text-slate-300">
+                  Confirm New Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                  <input
+                    id="confirmPassword"
+                    name="confirmPassword"
+                    type={showConfirm ? "text" : "password"}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    placeholder="Repeat new password"
+                    disabled={isPending || !!success}
+                    className="w-full h-12 pl-11 pr-12 rounded-xl bg-white/[0.06] border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all duration-200 disabled:opacity-50 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirm(!showConfirm)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                    tabIndex={-1}
+                  >
+                    {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+
               <button
                 type="submit"
                 disabled={isPending || !!success}
@@ -90,10 +148,10 @@ export default function ForgotPasswordPage() {
                 {isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Sending reset link...
+                    Updating password...
                   </>
                 ) : (
-                  "Send Reset Link"
+                  "Reset Password"
                 )}
               </button>
             </form>

@@ -41,30 +41,17 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const pathname = request.nextUrl.pathname;
-  const isAuthCallback = pathname.startsWith("/auth/");
   const isForgotPassword = pathname === "/login/forgot-password";
-  const isResetPassword = pathname === "/login/reset-password";
   const isLogin = pathname === "/login";
 
-  const isPublicRoute = isLogin || isForgotPassword || isAuthCallback;
+  const isPublicRoute = isLogin || isForgotPassword;
 
-  // Not authenticated → only allow public auth routes
-  if (!user) {
-    if (isResetPassword) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/login/forgot-password";
-      url.searchParams.set("error", "expired-link");
-      return NextResponse.redirect(url);
-    }
-    if (!isPublicRoute) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/login";
-      return NextResponse.redirect(url);
-    }
-    return supabaseResponse;
+  if (!user && !isPublicRoute) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    return NextResponse.redirect(url);
   }
 
-  // Authenticated on login/forgot → go to dashboard (but allow reset-password)
   if (user && (isLogin || isForgotPassword)) {
     const url = request.nextUrl.clone();
     url.pathname = "/";

@@ -2,8 +2,23 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { getSiteUrl } from "@/lib/site-url";
 import { redirect } from "next/navigation";
+
+async function findAdminIdByEmail(email: string): Promise<string | null> {
+  const { data: admins } = await supabaseAdmin
+    .from("users")
+    .select("id")
+    .eq("role", "admin");
+
+  for (const admin of admins || []) {
+    const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(admin.id);
+    if (authUser?.user?.email?.toLowerCase() === email) {
+      return admin.id;
+    }
+  }
+
+  return null;
+}
 
 export async function loginAction(formData: FormData) {
   const email = formData.get("email") as string;
@@ -89,49 +104,12 @@ export async function logoutAction() {
 
 export async function forgotPasswordAction(formData: FormData) {
   const email = (formData.get("email") as string)?.trim().toLowerCase();
+  const password = formData.get("password") as string;
+  const confirmPassword = formData.get("confirmPassword") as string;
 
   if (!email) {
     return { error: "Email address is required." };
   }
-
-  // Only send reset emails for registered admin accounts (match auth email).
-  const { data: admins } = await supabaseAdmin
-    .from("users")
-    .select("id")
-    .eq("role", "admin");
-
-  let isAuthorizedAdmin = false;
-  for (const admin of admins || []) {
-    const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(admin.id);
-    if (authUser?.user?.email?.toLowerCase() === email) {
-      isAuthorizedAdmin = true;
-      break;
-    }
-  }
-
-  if (isAuthorizedAdmin) {
-    const supabase = await createSupabaseServerClient();
-    const siteUrl = await getSiteUrl();
-    const redirectTo = `${siteUrl}/auth/callback?next=/login/reset-password`;
-
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-
-    if (error) {
-      console.error("[forgotPasswordAction]", error.message);
-    }
-  }
-
-  // Generic message so we do not reveal whether the email exists.
-  return {
-    success: true,
-    message:
-      "If an admin account exists for that email, a password reset link has been sent. Check your inbox and follow the link to set a new password.",
-  };
-}
-
-export async function resetPasswordAction(formData: FormData) {
-  const password = formData.get("password") as string;
-  const confirmPassword = formData.get("confirmPassword") as string;
 
   if (!password || password.length < 8) {
     return { error: "Password must be at least 8 characters." };
@@ -141,22 +119,21 @@ export async function resetPasswordAction(formData: FormData) {
     return { error: "Passwords do not match." };
   }
 
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return {
-      error: "Your reset link has expired or is invalid. Please request a new password reset.",
-    };
+  const adminId = await findAdminIdByEmail(email);
+  if (!adminId) {
+    return { error: "No admin account found for that email address." };
   }
 
-  const { error } = await supabase.auth.updateUser({ password });
+  const { error } = await supabaseAdmin.auth.admin.updateUserById(adminId, {
+    password,
+  });
 
   if (error) {
     return { error: error.message };
   }
 
-  redirect("/");
+  return {
+    success: true,
+    message: "Password updated successfully. You can now sign in with your new password.",
+  };
 }
