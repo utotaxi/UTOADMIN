@@ -16,18 +16,15 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DriverIncomePanel, type Deduction } from "./DriverIncomePanel";
 import DriverApprovalButton from "./DriverApprovalButton";
+import {
+    computeCancellationAmount,
+    isCancelledStatus,
+} from "@/lib/cancellation-income";
 
 export const dynamic = "force-dynamic";
 
 // Staleness threshold — same as cleanup route
 const STALE_THRESHOLD_MINUTES = 2;
-
-// A cancelled ride debits a 50% cancellation fee from the driver.
-// Use the settled final_price when present, otherwise 50% of fare.
-function computeCancellationFee(ride: any): number {
-    const base = ride.estimated_price || ride.final_price || 0;
-    return Math.round(base * 0.5 * 100) / 100;
-}
 
 // Formats a cancellation reason as "who cancelled" + any extra detail recorded.
 function formatCancelledBy(raw?: string | null): string {
@@ -47,10 +44,6 @@ function formatCancelledBy(raw?: string | null): string {
         return `${who} — ${detail}`;
     }
     return who;
-}
-
-function isCancelledStatus(status?: string): boolean {
-    return status === "cancelled" || status === "cancelled_no_drivers";
 }
 
 export default async function DriverDetailsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -114,21 +107,17 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
         .order('created_at', { ascending: false });
     const deductions: Deduction[] = (deductionsData || []) as Deduction[];
 
-    // ── Cancellation-fee income ──────────────────────────────────────────────
-    // When a ride is cancelled the driver is still credited a cancellation fee
-    // (typically 50% of the fare). These don't always have a `payments` row, so
-    // we synthesize income entries from the cancelled rides themselves so ALL
-    // income activity is reflected — including who cancelled and why.
+    // ── Cancellation income (rider cancel = +100%, driver cancel = −50%) ───
     const paymentRideIds = new Set(driverPayments.map(p => p.ride_id));
     const cancellationEntries = (allDriverRides || [])
         .filter((r: any) =>
             isCancelledStatus(r.status) &&
-            computeCancellationFee(r) > 0 &&
+            computeCancellationAmount(r) !== 0 &&
             !paymentRideIds.has(r.id)
         )
         .map((r: any) => ({
             id: `cancel-${r.id}`,
-            amount: -computeCancellationFee(r),
+            amount: computeCancellationAmount(r),
             status: 'succeeded',
             currency: 'gbp',
             payment_method: 'cancellation_fee',
@@ -335,7 +324,11 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
                             {rides && rides.length > 0 ? (
                                 rides.map((ride: any) => {
                                     const cancelled = isCancelledStatus(ride.status);
-                                    const fee = cancelled ? computeCancellationFee(ride) : (ride.final_price || ride.estimated_price || 0);
+                                    const cancelAmount = cancelled ? computeCancellationAmount(ride) : 0;
+                                    const displayAmount = cancelled
+                                        ? cancelAmount
+                                        : (ride.final_price || ride.estimated_price || 0);
+                                    const isDebit = cancelled && cancelAmount < 0;
                                     return (
                                     <div key={ride.id} className="p-4 rounded-lg border bg-slate-50/50 dark:bg-slate-900/50 flex flex-col sm:flex-row gap-4 justify-between sm:items-center">
                                         <div className="flex flex-col flex-1 max-w-[280px]">
@@ -360,11 +353,13 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
 
                                         <div className="flex flex-col sm:items-end gap-1">
                                             <span className="text-xs text-muted-foreground">Rider: {ride.rider?.full_name || 'Unknown'}</span>
-                                            <span className={`font-bold text-lg ${cancelled ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                                                {cancelled ? '-' : '+'}£{fee.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            <span className={`font-bold text-lg ${isDebit ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                                {isDebit ? '-' : '+'}£{Math.abs(displayAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                             </span>
                                             {cancelled && (
-                                                <span className="text-[10px] text-muted-foreground">Cancellation fee (50%)</span>
+                                                <span className="text-[10px] text-muted-foreground">
+                                                    {isDebit ? 'Cancellation fee (50%)' : 'Cancellation credit (100%)'}
+                                                </span>
                                             )}
                                             <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${cancelled ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' : 'bg-slate-200 dark:bg-slate-800'}`}>
                                                 {ride.status}

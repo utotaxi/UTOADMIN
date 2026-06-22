@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback, useTransition, useEffect } from "react";
+import { getCancellationAmountLabel } from "@/lib/cancellation-income";
 import {
     Wallet,
     CreditCard,
@@ -132,7 +133,9 @@ function formatCancellationReason(raw?: string | null): string {
 function formatIncomeAmount(amount: number, isCancellation = false): string {
     const abs = Math.abs(amount || 0);
     if (isCancellation) {
-        return `-£${abs.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+        return amount < 0
+            ? `-£${abs.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+            : `+£${abs.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
     }
     return `£${abs.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
 }
@@ -522,10 +525,18 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
         const pending = filteredPayments.filter(p => p.status === "pending");
         const cancellationEntries = filteredPayments.filter(p => p.entry_type === "cancellation");
         const rideEntries = succeeded.filter(p => p.entry_type !== "cancellation");
+        const cancellationCredits = cancellationEntries
+            .filter(p => (p.amount || 0) > 0)
+            .reduce((s, p) => s + (p.amount || 0), 0);
+        const cancellationDebits = cancellationEntries
+            .filter(p => (p.amount || 0) < 0)
+            .reduce((s, p) => s + (p.amount || 0), 0);
         return {
             total: succeeded.reduce((s, p) => s + (p.amount || 0), 0),
             rideTotal: rideEntries.reduce((s, p) => s + (p.amount || 0), 0),
             cancellationTotal: cancellationEntries.reduce((s, p) => s + (p.amount || 0), 0),
+            cancellationCredits,
+            cancellationDebits,
             cancellationCount: cancellationEntries.length,
             pending: pending.reduce((s, p) => s + (p.amount || 0), 0),
             count: filteredPayments.length,
@@ -768,9 +779,15 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                                 <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">£{filteredStats.rideTotal.toFixed(2)}</span>
                             </div>
                             <div className="flex flex-col items-end">
+                                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Cancellation credits</span>
+                                <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                                    +£{filteredStats.cancellationCredits.toFixed(2)}
+                                </span>
+                            </div>
+                            <div className="flex flex-col items-end">
                                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Cancellation fees</span>
                                 <span className="text-sm font-bold text-rose-600 dark:text-rose-400">
-                                    -£{Math.abs(filteredStats.cancellationTotal).toFixed(2)}
+                                    -£{Math.abs(filteredStats.cancellationDebits).toFixed(2)}
                                 </span>
                             </div>
                             <div className="flex flex-col items-end border-l pl-5">
@@ -838,19 +855,34 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                                                     )}
                                                 </td>
                                                 <td className="px-5 py-3.5">
-                                                    <span className={`font-bold ${payment.entry_type === "cancellation" ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                                    <span className={`font-bold ${
+                                                        payment.entry_type === "cancellation"
+                                                            ? (payment.amount || 0) < 0
+                                                                ? "text-rose-600 dark:text-rose-400"
+                                                                : "text-emerald-600 dark:text-emerald-400"
+                                                            : "text-emerald-600 dark:text-emerald-400"
+                                                    }`}>
                                                         {formatIncomeAmount(payment.amount || 0, payment.entry_type === "cancellation")}
                                                     </span>
                                                     <div className="text-[10px] text-muted-foreground uppercase">
-                                                        {payment.entry_type === "cancellation" ? "Cancellation fee" : (payment.currency || "gbp")}
+                                                        {payment.entry_type === "cancellation"
+                                                            ? getCancellationAmountLabel(payment.amount || 0)
+                                                            : (payment.currency || "gbp")}
                                                     </div>
                                                 </td>
                                                 <td className="px-5 py-3.5">
                                                     {payment.entry_type === "cancellation" ? (
-                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 border-rose-200 dark:border-rose-800">
-                                                            <XCircle className="w-3 h-3" />
-                                                            Cancelled
-                                                        </span>
+                                                        (payment.amount || 0) < 0 ? (
+                                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 border-rose-200 dark:border-rose-800">
+                                                                <XCircle className="w-3 h-3" />
+                                                                Cancelled
+                                                            </span>
+                                                        ) : (
+                                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800">
+                                                                <CheckCircle2 className="w-3 h-3" />
+                                                                Credited
+                                                            </span>
+                                                        )
                                                     ) : (
                                                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getPaymentStatusStyle(payment.status)}`}>
                                                             {getPaymentStatusIcon(payment.status)}
@@ -860,7 +892,7 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                                                 </td>
                                                 <td className="px-5 py-3.5 text-xs text-muted-foreground capitalize">
                                                     {payment.entry_type === "cancellation"
-                                                        ? "Cancellation fee"
+                                                        ? getCancellationAmountLabel(payment.amount || 0)
                                                         : (payment.payment_method?.replace("_", " ") || "card")}
                                                 </td>
                                             </tr>

@@ -1,19 +1,11 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import DriversListClient from "./DriversListClient";
+import { computeCancellationAmount, isCancelledStatus } from "@/lib/cancellation-income";
 
 export const dynamic = "force-dynamic";
 
 // Staleness threshold — same as cleanup route
 const STALE_THRESHOLD_MINUTES = 2;
-
-function computeCancellationFee(ride: { estimated_price?: number | null; final_price?: number | null }): number {
-    const base = ride.estimated_price || ride.final_price || 0;
-    return Math.round(base * 0.5 * 100) / 100;
-}
-
-function isCancelledStatus(status?: string): boolean {
-    return status === "cancelled" || status === "cancelled_no_drivers";
-}
 
 export default async function DriversPage() {
     // Clean up stale online statuses before rendering
@@ -38,7 +30,7 @@ export default async function DriversPage() {
     // Fetch all rides to map to driver IDs (incl. cancelled for fee income)
     const { data: allRides } = await supabaseAdmin
         .from('rides')
-        .select('id, driver_id, final_price, estimated_price, status, payment_status')
+        .select('id, driver_id, final_price, estimated_price, status, payment_status, cancellation_reason')
         .not('driver_id', 'is', null);
 
     // Fetch all payments (any status) so we don't double-count cancellation fees
@@ -85,17 +77,16 @@ export default async function DriversPage() {
             }
         });
 
-        // Add 50% cancellation fees as debits for cancelled rides without a payment record
-        // (matches the total shown on each driver's profile page).
+        // Rider cancel = +100% credit; driver cancel = −50% fee (matches profile totals).
         allRides.forEach(r => {
             if (
                 r.driver_id &&
                 isCancelledStatus(r.status) &&
                 !paymentRideIds.has(r.id)
             ) {
-                const fee = computeCancellationFee(r);
-                if (fee > 0) {
-                    earningsMap[r.driver_id] = (earningsMap[r.driver_id] || 0) - fee;
+                const amount = computeCancellationAmount(r);
+                if (amount !== 0) {
+                    earningsMap[r.driver_id] = (earningsMap[r.driver_id] || 0) + amount;
                 }
             }
         });
