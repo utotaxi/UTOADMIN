@@ -2,38 +2,41 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { supabaseAdmin } from "@/lib/supabase";
+import {
+  countAdminAccounts,
+  getAdminAccountByEmail,
+  normalizeAdminEmail,
+  saveAdminAccount,
+  syncAdminAuthUser,
+  updateAdminAccountPassword,
+} from "@/lib/admin-accounts";
 import { redirect } from "next/navigation";
 
-async function findAdminIdByEmail(email: string): Promise<string | null> {
-  const { data: admins } = await supabaseAdmin
-    .from("users")
-    .select("id")
-    .eq("role", "admin");
-
-  for (const admin of admins || []) {
-    const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(admin.id);
-    if (authUser?.user?.email?.toLowerCase() === email) {
-      return admin.id;
-    }
-  }
-
-  return null;
-}
-
 export async function loginAction(formData: FormData) {
-  const email = formData.get("email") as string;
+  const email = normalizeAdminEmail(formData.get("email") as string);
   const password = formData.get("password") as string;
 
   if (!email || !password) {
     return { error: "Email and password are required." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const account = await getAdminAccountByEmail(email);
 
-  const { error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
+  if (!account) {
+    return { error: "Invalid login credentials." };
+  }
+
+  if (account.password !== password) {
+    return { error: "Invalid login credentials." };
+  }
+
+  const { authUserId, error: syncError } = await syncAdminAuthUser(account, password);
+  if (syncError || !authUserId) {
+    return { error: syncError || "Unable to sign in. Please try again." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error) {
     return { error: error.message };
@@ -43,56 +46,69 @@ export async function loginAction(formData: FormData) {
 }
 
 export async function signupAction(formData: FormData) {
-  const email = formData.get("email") as string;
+  const email = normalizeAdminEmail(formData.get("email") as string);
   const password = formData.get("password") as string;
 
   if (!email || !password) {
     return { error: "Email and password are required." };
   }
 
-  // Security Check: Ensure only 1 admin can ever exist.
-  const { data: existingAdmins } = await supabaseAdmin
-    .from("users")
-    .select("id")
-    .eq("role", "admin")
-    .limit(1);
+  if (password.length < 8) {
+    return { error: "Password must be at least 8 characters." };
+  }
 
-  if (existingAdmins && existingAdmins.length > 0) {
-    return { error: "An admin account has already been registered. For security reasons, only 1 admin account is permitted." };
+  const existingCount = await countAdminAccounts();
+  if (existingCount > 0) {
+    return {
+      error:
+        "An admin account has already been registered. For security reasons, only 1 admin account is permitted.",
+    };
+  }
+
+  const { data: created, error: createError } =
+    await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    });
+
+  if (createError || !created.user) {
+    return { error: createError?.message || "Failed to create admin account." };
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  await supabaseAdmin.from("users").upsert({
+    id: created.user.id,
+    email,
+    role: "admin",
+    full_name: "System Admin",
+  });
+
+  const saved = await saveAdminAccount({
+    email,
+    password,
+    authUserId: created.user.id,
+    fullName: "System Admin",
+  });
+
+  if (!saved.success) {
+    return { error: saved.error || "Failed to save admin account details." };
   }
 
   const supabase = await createSupabaseServerClient();
-
-  const { data, error } = await supabase.auth.signUp({
+  const { error: signInError } = await supabase.auth.signInWithPassword({
     email,
     password,
   });
 
-  if (error) {
-    return { error: error.message };
-  }
-
-  // Ensure this user gets the admin role. 
-  // If a trigger already created a row, we update it. If not, upset handles it.
-  if (data?.user) {
-    // Adding a tiny delay to allow any Supabase 'auth to public triggers' to fire first.
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    await supabaseAdmin
-      .from("users")
-      .update({ role: "admin", full_name: "System Admin" })
-      .eq("id", data.user.id);
-  }
-
-  if (data?.session) {
-    // If auto-confirm is enabled, they are logged in immediately.
+  if (!signInError) {
     redirect("/");
   }
 
-  // If email confirmation is required by Supabase settings:
-  return { 
-    success: true, 
-    message: "Admin account created successfully! If you have 'Confirm email' enabled in Supabase, please check your inbox. Otherwise, you can now sign in." 
+  return {
+    success: true,
+    message: "Admin account created successfully! You can now sign in.",
   };
 }
 
@@ -103,7 +119,7 @@ export async function logoutAction() {
 }
 
 export async function forgotPasswordAction(formData: FormData) {
-  const email = (formData.get("email") as string)?.trim().toLowerCase();
+  const email = normalizeAdminEmail(formData.get("email") as string);
   const password = formData.get("password") as string;
   const confirmPassword = formData.get("confirmPassword") as string;
 
@@ -119,17 +135,45 @@ export async function forgotPasswordAction(formData: FormData) {
     return { error: "Passwords do not match." };
   }
 
-  const adminId = await findAdminIdByEmail(email);
-  if (!adminId) {
-    return { error: "No admin account found for that email address." };
+  let account = await getAdminAccountByEmail(email);
+
+  if (!account) {
+    const existingCount = await countAdminAccounts();
+    if (existingCount === 0) {
+      const saved = await saveAdminAccount({
+        email,
+        password,
+        fullName: "System Admin",
+      });
+      if (!saved.success) {
+        return {
+          error:
+            saved.error ||
+            "Could not create admin account. Please run scripts/create-admin-accounts-table.sql in Supabase first.",
+        };
+      }
+      account = await getAdminAccountByEmail(email);
+    } else {
+      return { error: "No admin account found for that email address." };
+    }
+  } else {
+    const { account: updated, error: updateError } = await updateAdminAccountPassword(
+      email,
+      password
+    );
+    if (updateError || !updated) {
+      return { error: updateError || "Failed to update password." };
+    }
+    account = updated;
   }
 
-  const { error } = await supabaseAdmin.auth.admin.updateUserById(adminId, {
-    password,
-  });
+  if (!account) {
+    return { error: "Unable to update admin account." };
+  }
 
-  if (error) {
-    return { error: error.message };
+  const { error: syncError } = await syncAdminAuthUser(account, password);
+  if (syncError) {
+    return { error: syncError };
   }
 
   return {
