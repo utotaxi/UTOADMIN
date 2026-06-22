@@ -85,7 +85,7 @@ export default async function DriversPage() {
             }
         });
 
-        // Add 50% cancellation fees for cancelled rides without a payment record
+        // Add 50% cancellation fees as debits for cancelled rides without a payment record
         // (matches the total shown on each driver's profile page).
         allRides.forEach(r => {
             if (
@@ -95,7 +95,7 @@ export default async function DriversPage() {
             ) {
                 const fee = computeCancellationFee(r);
                 if (fee > 0) {
-                    earningsMap[r.driver_id] = (earningsMap[r.driver_id] || 0) + fee;
+                    earningsMap[r.driver_id] = (earningsMap[r.driver_id] || 0) - fee;
                 }
             }
         });

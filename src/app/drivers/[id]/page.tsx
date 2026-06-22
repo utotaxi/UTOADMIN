@@ -22,8 +22,8 @@ export const dynamic = "force-dynamic";
 // Staleness threshold — same as cleanup route
 const STALE_THRESHOLD_MINUTES = 2;
 
-// A cancelled ride debits a 50% cancellation fee, which is the driver's income
-// for that ride. Use the settled final_price when present, otherwise 50% of fare.
+// A cancelled ride debits a 50% cancellation fee from the driver.
+// Use the settled final_price when present, otherwise 50% of fare.
 function computeCancellationFee(ride: any): number {
     const base = ride.estimated_price || ride.final_price || 0;
     return Math.round(base * 0.5 * 100) / 100;
@@ -128,7 +128,7 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
         )
         .map((r: any) => ({
             id: `cancel-${r.id}`,
-            amount: computeCancellationFee(r),
+            amount: -computeCancellationFee(r),
             status: 'succeeded',
             currency: 'gbp',
             payment_method: 'cancellation_fee',
@@ -361,7 +361,7 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
                                         <div className="flex flex-col sm:items-end gap-1">
                                             <span className="text-xs text-muted-foreground">Rider: {ride.rider?.full_name || 'Unknown'}</span>
                                             <span className={`font-bold text-lg ${cancelled ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                                                +£{fee.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                {cancelled ? '-' : '+'}£{fee.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                             </span>
                                             {cancelled && (
                                                 <span className="text-[10px] text-muted-foreground">Cancellation fee (50%)</span>

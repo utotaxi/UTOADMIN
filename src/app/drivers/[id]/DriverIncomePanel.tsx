@@ -129,6 +129,14 @@ function formatCancellationReason(raw?: string | null): string {
     return who;
 }
 
+function formatIncomeAmount(amount: number, isCancellation = false): string {
+    const abs = Math.abs(amount || 0);
+    if (isCancellation) {
+        return `-£${abs.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+    }
+    return `£${abs.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+}
+
 function getWeekStart(d: Date): string {
     const date = new Date(d);
     const day = date.getDay();
@@ -761,7 +769,9 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                             </div>
                             <div className="flex flex-col items-end">
                                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Cancellation fees</span>
-                                <span className="text-sm font-bold text-rose-600 dark:text-rose-400">£{filteredStats.cancellationTotal.toFixed(2)}</span>
+                                <span className="text-sm font-bold text-rose-600 dark:text-rose-400">
+                                    -£{Math.abs(filteredStats.cancellationTotal).toFixed(2)}
+                                </span>
                             </div>
                             <div className="flex flex-col items-end border-l pl-5">
                                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Total{filteredStats.count > 0 ? ` · ${filteredStats.count} entr${filteredStats.count === 1 ? "y" : "ies"}` : ""}</span>
@@ -828,8 +838,8 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                                                     )}
                                                 </td>
                                                 <td className="px-5 py-3.5">
-                                                    <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                                                        £{(payment.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                    <span className={`font-bold ${payment.entry_type === "cancellation" ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                                        {formatIncomeAmount(payment.amount || 0, payment.entry_type === "cancellation")}
                                                     </span>
                                                     <div className="text-[10px] text-muted-foreground uppercase">
                                                         {payment.entry_type === "cancellation" ? "Cancellation fee" : (payment.currency || "gbp")}
