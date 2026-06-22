@@ -125,14 +125,12 @@ export default function LoginPage() {
                   >
                     Password
                   </label>
-                  {!isSignUp && (
-                    <Link
-                      href="/login/forgot-password"
-                      className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors font-medium"
-                    >
-                      Forgot password?
-                    </Link>
-                  )}
+                  <Link
+                    href="/login/forgot-password"
+                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors font-medium"
+                  >
+                    Forgot password?
+                  </Link>
                 </div>
                 <div className="relative">
                   <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
@@ -179,7 +177,7 @@ export default function LoginPage() {
             </form>
             
             {/* Toggle Sign Up / Sign In */}
-            <div className="mt-6 text-center">
+            <div className="mt-6 flex flex-col items-center gap-3">
               <button
                 type="button"
                 onClick={() => {
@@ -193,6 +191,12 @@ export default function LoginPage() {
                   ? "Already have an account? Sign in" 
                   : "First time? Create your admin account"}
               </button>
+              <Link
+                href="/login/forgot-password"
+                className="text-xs text-slate-400 hover:text-indigo-300 transition-colors"
+              >
+                Forgot your password? Reset it here
+              </Link>
             </div>
           </div>
 
