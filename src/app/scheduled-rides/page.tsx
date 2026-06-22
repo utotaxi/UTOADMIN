@@ -145,8 +145,6 @@ export default async function ScheduledRidesPage() {
         };
     });
 
-    const now = new Date();
-
     // Completed and cancelled rides are moved to "Rides & Trips" (history), so
     // the Scheduled Rides page only lists active (upcoming / in-progress) rides.
     const activeBookings = (bookings || []).filter(
@@ -270,18 +268,10 @@ export default async function ScheduledRidesPage() {
                             <tbody className="divide-y divide-border">
                                 {tableBookings.length > 0 ? (
                                     tableBookings.map((booking: any) => {
-                                        const isPast = new Date(booking.pickup_at) <= now;
-                                        const isCancelled = booking.status === 'cancelled' || booking.status === 'cancelled_no_drivers';
-                                        const isCompleted = booking.status === 'completed';
-                                        const isExpired = booking.status === 'expired';
-                                        // Blur & dim rides whose pickup time has passed or that are cancelled.
-                                        const shouldDim = isPast || isCancelled || isCompleted || isExpired;
                                         return (
                                             <tr
                                                 key={booking.id}
-                                                className={`bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
-                                                    shouldDim ? 'opacity-50 dark:opacity-40 blur-[1.1px] hover:blur-none hover:opacity-100 grayscale hover:grayscale-0' : ''
-                                                }`}
+                                                className="bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                                             >
                                                 <td className="px-6 py-4">
                                                     <div className="flex flex-col max-w-[250px]">
