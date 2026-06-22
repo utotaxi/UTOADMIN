@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { loginAction, signupAction } from "./actions";
 import { ShieldCheck, Lock, Mail, Eye, EyeOff, Loader2, CheckCircle2 } from "lucide-react";
 
@@ -117,12 +118,22 @@ export default function LoginPage() {
 
               {/* Password */}
               <div className="space-y-2">
-                <label
-                  htmlFor="password"
-                  className="text-sm font-medium text-slate-300"
-                >
-                  Password
-                </label>
+                <div className="flex items-center justify-between">
+                  <label
+                    htmlFor="password"
+                    className="text-sm font-medium text-slate-300"
+                  >
+                    Password
+                  </label>
+                  {!isSignUp && (
+                    <Link
+                      href="/login/forgot-password"
+                      className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors font-medium"
+                    >
+                      Forgot password?
+                    </Link>
+                  )}
+                </div>
                 <div className="relative">
                   <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                   <input

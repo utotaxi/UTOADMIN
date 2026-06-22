@@ -8,7 +8,7 @@ import Sidebar from "./Sidebar";
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isLoginPage = pathname === "/login";
+  const isLoginPage = pathname === "/login" || pathname.startsWith("/login/");
 
   if (isLoginPage) {
     // Full-screen layout without sidebar for login
