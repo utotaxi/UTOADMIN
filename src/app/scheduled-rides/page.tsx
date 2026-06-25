@@ -11,6 +11,8 @@ import {
     UserCircle,
     Globe,
     Pencil,
+    ArrowRight,
+    ArrowLeft,
 } from "lucide-react";
 import AssignDriverButton from "./AssignDriverButton";
 
@@ -36,6 +38,96 @@ function mapWebBookerStatus(status?: string): string {
         default:
             return 'scheduled';
     }
+}
+
+// Build a single "Additional Stop" display string from the stops array /
+// stops_text columns. Returns null when the leg has no additional stop.
+function formatAdditionalStop(stops: unknown, stopsText: unknown): string | null {
+    if (typeof stopsText === 'string' && stopsText.trim()) return stopsText.trim();
+    if (Array.isArray(stops)) {
+        const cleaned = stops.filter((s) => typeof s === 'string' && (s as string).trim()) as string[];
+        if (cleaned.length > 0) return cleaned.join('  •  ');
+    }
+    return null;
+}
+
+// Coerce a value to a finite number, or null.
+function toNum(v: unknown): number | null {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+}
+
+// Safe date formatting that won't throw on null / invalid values.
+function fmtDate(value: unknown, pattern: string): string {
+    if (!value) return '—';
+    const d = new Date(value as string);
+    return Number.isNaN(d.getTime()) ? '—' : format(d, pattern);
+}
+
+// Expand a booking into display "legs". Round-trip "later" bookings become two
+// separate rows (onward + return); everything else stays a single row. Each leg
+// carries its own route, additional stop and individual fare.
+function expandBookingToLegs(booking: any): any[] {
+    const assignBookingId = booking.id;
+
+    if (booking.source !== 'later' || !booking.is_round_trip) {
+        const fare = booking.source === 'web_booker'
+            ? (toNum(booking.estimated_price) ?? toNum(booking.estimated_fare) ?? toNum(booking.final_price) ?? 0)
+            : (toNum(booking.outbound_fare) ?? toNum(booking.estimated_fare) ?? 0);
+        return [{
+            ...booking,
+            assignBookingId,
+            rowKey: booking.id,
+            leg: 'single',
+            legLabel: null,
+            additional_stop: formatAdditionalStop(booking.stops, booking.stops_text),
+            leg_fare: fare,
+        }];
+    }
+
+    // Round trip → split the combined fare into the two individual legs.
+    const totalFare = toNum(booking.estimated_fare);
+    const outFare = toNum(booking.outbound_fare);
+    const retFare = toNum(booking.return_fare);
+    const outboundFare = outFare
+        ?? (totalFare != null && retFare != null ? Math.round((totalFare - retFare) * 100) / 100 : totalFare)
+        ?? 0;
+    const returnFare = retFare
+        ?? (totalFare != null && outFare != null ? Math.round((totalFare - outFare) * 100) / 100 : totalFare)
+        ?? 0;
+
+    const outbound = {
+        ...booking,
+        assignBookingId,
+        rowKey: `${booking.id}::outbound`,
+        leg: 'outbound',
+        legLabel: 'Onward',
+        additional_stop: formatAdditionalStop(booking.stops, booking.stops_text),
+        leg_fare: outboundFare,
+    };
+
+    const returnAt = booking.return_at || null;
+    const retDur = toNum(booking.return_duration_minutes);
+    const returnDropoffBy = (returnAt && retDur != null)
+        ? new Date(new Date(returnAt).getTime() + retDur * 60000).toISOString()
+        : (returnAt || booking.dropoff_by);
+
+    const ret = {
+        ...booking,
+        assignBookingId,
+        rowKey: `${booking.id}::return`,
+        leg: 'return',
+        legLabel: 'Return',
+        pickup_address: booking.return_pickup_address || booking.dropoff_address,
+        dropoff_address: booking.return_dropoff_address || booking.pickup_address,
+        additional_stop: formatAdditionalStop(booking.return_stops, booking.return_stops_text),
+        pickup_at: returnAt || booking.pickup_at,
+        dropoff_by: returnDropoffBy,
+        leg_fare: returnFare,
+    };
+
+    return [outbound, ret];
 }
 
 export default async function ScheduledRidesPage() {
@@ -151,11 +243,11 @@ export default async function ScheduledRidesPage() {
         (b: any) => !['completed', 'cancelled', 'cancelled_no_drivers', 'expired'].includes(b.status)
     );
 
-    // Table rows ordered by pickup date & time, most recent first
-    // (matches the ordering used on the Rides & Trips page).
-    const tableBookings = [...activeBookings].sort(
-        (a: any, b: any) => new Date(b.pickup_at).getTime() - new Date(a.pickup_at).getTime()
-    );
+    // Expand round-trip "later" bookings into separate onward + return legs,
+    // then order every leg by its own pickup date & time (most recent first).
+    const tableLegs = activeBookings
+        .flatMap((b: any) => expandBookingToLegs(b))
+        .sort((a: any, b: any) => new Date(b.pickup_at).getTime() - new Date(a.pickup_at).getTime());
 
     const getStatusBadge = (status: string) => {
         switch (status) {
@@ -255,6 +347,7 @@ export default async function ScheduledRidesPage() {
                             <thead className="text-xs text-muted-foreground uppercase bg-slate-50/50 dark:bg-slate-900/50 border-b">
                                 <tr>
                                     <th scope="col" className="px-6 py-4 font-medium">Route</th>
+                                    <th scope="col" className="px-6 py-4 font-medium">Additional Stop</th>
                                     <th scope="col" className="px-6 py-4 font-medium">Rider</th>
                                     <th scope="col" className="px-6 py-4 font-medium">Driver</th>
                                     <th scope="col" className="px-6 py-4 font-medium">Status</th>
@@ -266,16 +359,16 @@ export default async function ScheduledRidesPage() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
-                                {tableBookings.length > 0 ? (
-                                    tableBookings.map((booking: any) => {
+                                {tableLegs.length > 0 ? (
+                                    tableLegs.map((booking: any) => {
                                         return (
                                             <tr
-                                                key={booking.id}
+                                                key={booking.rowKey}
                                                 className="bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                                             >
                                                 <td className="px-6 py-4">
                                                     <div className="flex flex-col max-w-[250px]">
-                                                        <div className="flex items-center gap-2 mb-2">
+                                                        <div className="flex items-center gap-2 mb-2 flex-wrap">
                                                             {booking.source === 'web_booker' ? (
                                                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-indigo-100 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
                                                                     <Globe className="w-3 h-3" /> Web Booker
@@ -283,6 +376,16 @@ export default async function ScheduledRidesPage() {
                                                             ) : (
                                                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
                                                                     App
+                                                                </span>
+                                                            )}
+                                                            {booking.legLabel === 'Onward' && (
+                                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                                                                    <ArrowRight className="w-3 h-3" /> Onward
+                                                                </span>
+                                                            )}
+                                                            {booking.legLabel === 'Return' && (
+                                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                                                                    <ArrowLeft className="w-3 h-3" /> Return
                                                                 </span>
                                                             )}
                                                             {booking.reference && (
@@ -304,6 +407,20 @@ export default async function ScheduledRidesPage() {
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4">
+                                                    {booking.additional_stop ? (
+                                                        <div className="flex items-start gap-2 text-xs max-w-[200px]">
+                                                            <MapPin className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
+                                                            <span className="truncate" title={booking.additional_stop}>
+                                                                {booking.additional_stop}
+                                                            </span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold text-muted-foreground bg-slate-100 dark:bg-slate-800">
+                                                            N/A
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td className="px-6 py-4">
                                                     <div className="flex items-center gap-2">
                                                         <UserCircle className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                                                         <span className="text-xs font-medium">
@@ -312,7 +429,7 @@ export default async function ScheduledRidesPage() {
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4">
-                                                    <AssignDriverButton bookingId={booking.id} currentDriverName={booking.driver_name} source={booking.source} />
+                                                    <AssignDriverButton bookingId={booking.assignBookingId} currentDriverName={booking.driver_name} source={booking.source} />
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     {getStatusBadge(booking.status)}
@@ -320,20 +437,20 @@ export default async function ScheduledRidesPage() {
                                                 <td className="px-6 py-4 whitespace-nowrap">
                                                     <div className="flex flex-col">
                                                         <span className="text-xs font-semibold text-foreground">
-                                                            {format(new Date(booking.pickup_at), 'MMM dd, yyyy')}
+                                                            {fmtDate(booking.pickup_at, 'MMM dd, yyyy')}
                                                         </span>
                                                         <span className="text-xs text-muted-foreground">
-                                                            {format(new Date(booking.pickup_at), 'HH:mm')}
+                                                            {fmtDate(booking.pickup_at, 'HH:mm')}
                                                         </span>
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4 whitespace-nowrap">
                                                     <div className="flex flex-col">
                                                         <span className="text-xs font-semibold text-foreground">
-                                                            {format(new Date(booking.dropoff_by), 'MMM dd, yyyy')}
+                                                            {fmtDate(booking.dropoff_by, 'MMM dd, yyyy')}
                                                         </span>
                                                         <span className="text-xs text-muted-foreground">
-                                                            {format(new Date(booking.dropoff_by), 'HH:mm')}
+                                                            {fmtDate(booking.dropoff_by, 'HH:mm')}
                                                         </span>
                                                     </div>
                                                 </td>
@@ -341,10 +458,10 @@ export default async function ScheduledRidesPage() {
                                                     {booking.created_at ? (
                                                         <div className="flex flex-col">
                                                             <span className="text-xs font-semibold text-foreground">
-                                                                {format(new Date(booking.created_at), 'MMM dd, yyyy')}
+                                                                {fmtDate(booking.created_at, 'MMM dd, yyyy')}
                                                             </span>
                                                             <span className="text-xs text-muted-foreground">
-                                                                {format(new Date(booking.created_at), 'HH:mm')}
+                                                                {fmtDate(booking.created_at, 'HH:mm')}
                                                             </span>
                                                         </div>
                                                     ) : (
@@ -352,12 +469,12 @@ export default async function ScheduledRidesPage() {
                                                     )}
                                                 </td>
                                                 <td className="px-6 py-4 font-bold text-emerald-600 dark:text-emerald-400">
-                                                    £{Number(booking.estimated_fare || booking.estimated_price || booking.final_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    £{Number(booking.leg_fare || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     {booking.source === 'web_booker' ? (
                                                         <Link
-                                                            href={`/web-booker/dashboard/${booking.id}`}
+                                                            href={`/web-booker/dashboard/${booking.assignBookingId}`}
                                                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
                                                         >
                                                             <Pencil className="w-3.5 h-3.5" /> Edit details
@@ -371,7 +488,7 @@ export default async function ScheduledRidesPage() {
                                     })
                                 ) : (
                                     <tr>
-                                        <td colSpan={9} className="px-6 py-16 text-center text-muted-foreground">
+                                        <td colSpan={10} className="px-6 py-16 text-center text-muted-foreground">
                                             <div className="flex flex-col items-center justify-center gap-3">
                                                 <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
                                                     <CalendarClock className="w-8 h-8 opacity-40" />
