@@ -23,6 +23,7 @@ function mapWebBookerStatus(status?: string): string {
     switch (status) {
         case 'driver_assigned':
         case 'manual':
+            return 'driver_assigned';
         case 'driver_accepted':
             return 'driver_accepted';
         case 'completed':
@@ -38,6 +39,11 @@ function mapWebBookerStatus(status?: string): string {
         default:
             return 'scheduled';
     }
+}
+
+// Once a ride is accepted / started by a driver it should not be reassigned.
+function isDriverAssignmentLocked(status?: string): boolean {
+    return ['driver_accepted', 'accepted', 'arrived', 'started', 'in_progress', 'completed'].includes((status || '').toLowerCase());
 }
 
 // Build a single "Additional Stop" display string from the stops array /
@@ -63,6 +69,52 @@ function fmtDate(value: unknown, pattern: string): string {
     if (!value) return '—';
     const d = new Date(value as string);
     return Number.isNaN(d.getTime()) ? '—' : format(d, pattern);
+}
+
+function nonEmptyString(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+}
+
+function firstNonEmptyString(...values: unknown[]): string | null {
+    for (const value of values) {
+        const cleaned = nonEmptyString(value);
+        if (cleaned) return cleaned;
+    }
+    return null;
+}
+
+function resolveRiderId(booking: any): string | null {
+    const riderId = nonEmptyString(booking.rider_id);
+    if (riderId) return riderId;
+
+    // `later_bookings` may still use `user_id` to store rider ids.
+    if (booking.source === 'later') {
+        return nonEmptyString(booking.user_id);
+    }
+
+    return null;
+}
+
+function resolveDriverId(booking: any): string | null {
+    return firstNonEmptyString(booking.driver_id, booking.assigned_driver_id, booking.assigned_driver);
+}
+
+function resolveRiderName(booking: any, riderMap: Record<string, string>): string | null {
+    const riderId = resolveRiderId(booking);
+    const firstName = nonEmptyString(booking.first_name);
+    const lastName = nonEmptyString(booking.last_name);
+    const fullNameFromParts = [firstName, lastName].filter(Boolean).join(' ').trim();
+
+    return firstNonEmptyString(
+        riderId ? riderMap[riderId] : null,
+        booking.rider_name,
+        booking.passenger_name,
+        booking.customer_name,
+        fullNameFromParts,
+        booking.users?.full_name
+    );
 }
 
 // Expand a booking into display "legs". Round-trip "later" bookings become two
@@ -144,7 +196,7 @@ export default async function ScheduledRidesPage() {
     // Fetch admin/web-booker bookings so they appear here too.
     const { data: webBookings, error: webError } = await supabaseAdmin
         .from('web_booker')
-        .select('*')
+        .select('*, users:rider_id(full_name)')
         .order('scheduled_time', { ascending: true });
 
     if (webError) {
@@ -173,8 +225,12 @@ export default async function ScheduledRidesPage() {
     const rawBookings = [...normalizedLater, ...normalizedWeb];
 
     // Collect unique rider_id and driver_id values to look up names
-    const riderIds = [...new Set((rawBookings || []).map((b: any) => b.rider_id || b.user_id).filter(Boolean))];
-    const driverIds = [...new Set((rawBookings || []).map((b: any) => b.driver_id || b.assigned_driver_id || b.assigned_driver).filter(Boolean))];
+    const riderIds = [...new Set((rawBookings || [])
+        .map((b: any) => resolveRiderId(b))
+        .filter((id: string | null): id is string => Boolean(id)))];
+    const driverIds = [...new Set((rawBookings || [])
+        .map((b: any) => resolveDriverId(b))
+        .filter((id: string | null): id is string => Boolean(id)))];
 
     // Fetch rider details from users table
     const riderMap: Record<string, string> = {};
@@ -228,12 +284,12 @@ export default async function ScheduledRidesPage() {
 
     // Enrich bookings with rider/driver names
     const bookings = (rawBookings || []).map((b: any) => {
-        const rId = b.rider_id || b.user_id;
-        const dId = b.driver_id || b.assigned_driver_id || b.assigned_driver;
+        const dId = resolveDriverId(b);
         return {
             ...b,
-            rider_name: riderMap[rId] || null,
-            driver_name: driverMap[dId] || b.assigned_driver_name || null,
+            rider_name: resolveRiderName(b, riderMap),
+            driver_name: (dId ? driverMap[dId] : null) || b.assigned_driver_name || null,
+            is_driver_assignment_locked: isDriverAssignmentLocked(b.status),
         };
     });
 
@@ -244,10 +300,16 @@ export default async function ScheduledRidesPage() {
     );
 
     // Expand round-trip "later" bookings into separate onward + return legs,
-    // then order every leg by its own pickup date & time (most recent first).
+    // then order every leg by pickup date & time (earliest upcoming first).
     const tableLegs = activeBookings
         .flatMap((b: any) => expandBookingToLegs(b))
-        .sort((a: any, b: any) => new Date(b.pickup_at).getTime() - new Date(a.pickup_at).getTime());
+        .sort((a: any, b: any) => {
+            const aTime = new Date(a.pickup_at || 0).getTime();
+            const bTime = new Date(b.pickup_at || 0).getTime();
+            const safeATime = Number.isFinite(aTime) ? aTime : Number.MAX_SAFE_INTEGER;
+            const safeBTime = Number.isFinite(bTime) ? bTime : Number.MAX_SAFE_INTEGER;
+            return safeATime - safeBTime;
+        });
 
     const getStatusBadge = (status: string) => {
         switch (status) {
@@ -257,10 +319,16 @@ export default async function ScheduledRidesPage() {
                         <CalendarClock className="w-3 h-3" /> Scheduled
                     </span>
                 );
-            case 'driver_accepted':
+            case 'driver_assigned':
                 return (
                     <span className="inline-flex items-center gap-1.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-2.5 py-1 rounded-full text-xs font-semibold">
                         <CheckCircle2 className="w-3 h-3" /> Driver Assigned
+                    </span>
+                );
+            case 'driver_accepted':
+                return (
+                    <span className="inline-flex items-center gap-1.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-2.5 py-1 rounded-full text-xs font-semibold">
+                        <CheckCircle2 className="w-3 h-3" /> Driver Accepted
                     </span>
                 );
             case 'in_progress':
@@ -292,7 +360,7 @@ export default async function ScheduledRidesPage() {
 
     const totalBookings = activeBookings.length;
     const scheduledCount = activeBookings.filter((b: any) => b.status === 'scheduled').length;
-    const acceptedCount = activeBookings.filter((b: any) => b.status === 'driver_accepted').length;
+    const assignedCount = activeBookings.filter((b: any) => ['driver_assigned', 'driver_accepted'].includes(b.status)).length;
     const inProgressCount = activeBookings.filter((b: any) => b.status === 'in_progress' || b.status === 'arrived' || b.status === 'started').length;
 
     return (
@@ -325,7 +393,7 @@ export default async function ScheduledRidesPage() {
                         <span className="text-sm font-medium text-muted-foreground">Driver Assigned</span>
                         <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     </div>
-                    <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{acceptedCount}</div>
+                    <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{assignedCount}</div>
                     <p className="text-xs text-muted-foreground mt-1">Ready for pickup</p>
                 </div>
                 <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-5 glass hover:shadow-md transition-shadow">
@@ -429,7 +497,13 @@ export default async function ScheduledRidesPage() {
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4">
-                                                    <AssignDriverButton bookingId={booking.assignBookingId} currentDriverName={booking.driver_name} source={booking.source} />
+                                                    <AssignDriverButton
+                                                        bookingId={booking.assignBookingId}
+                                                        currentDriverName={booking.driver_name}
+                                                        source={booking.source}
+                                                        status={booking.status}
+                                                        lockAssignment={booking.is_driver_assignment_locked}
+                                                    />
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     {getStatusBadge(booking.status)}

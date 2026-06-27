@@ -3,6 +3,19 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
 
+const LOCKED_ASSIGNMENT_STATUSES = new Set([
+  'driver_accepted',
+  'accepted',
+  'arrived',
+  'started',
+  'in_progress',
+  'completed',
+]);
+
+function hasLockedAssignmentStatus(status?: string | null): boolean {
+  return LOCKED_ASSIGNMENT_STATUSES.has((status || '').toLowerCase());
+}
+
 /**
  * Fetch all drivers (with their user names) for manual assignment dropdown.
  */
@@ -48,6 +61,28 @@ export async function manualAssignDriverToScheduled(
 ) {
   try {
     if (source === 'web_booker') {
+      const { data: existingBooking, error: existingError } = await supabaseAdmin
+        .from('web_booker')
+        .select('id, status, assigned_driver_id, assigned_driver_name')
+        .eq('id', bookingId)
+        .maybeSingle();
+
+      if (existingError || !existingBooking) {
+        console.error("[ManualAssign] Failed to load existing web booking:", existingError);
+        return { success: false, error: existingError?.message || "Booking not found." };
+      }
+
+      if (hasLockedAssignmentStatus(existingBooking.status) && existingBooking.assigned_driver_id && existingBooking.assigned_driver_id !== driverId) {
+        return {
+          success: false,
+          error: `This ride was already accepted by ${existingBooking.assigned_driver_name || 'another driver'} and cannot be reassigned.`,
+        };
+      }
+
+      if (hasLockedAssignmentStatus(existingBooking.status) && existingBooking.assigned_driver_id === driverId) {
+        return { success: true };
+      }
+
       const { error } = await supabaseAdmin
         .from('web_booker')
         .update({
@@ -64,6 +99,28 @@ export async function manualAssignDriverToScheduled(
         return { success: false, error: error.message };
       }
     } else {
+      const { data: existingBooking, error: existingError } = await supabaseAdmin
+        .from('later_bookings')
+        .select('id, status, driver_id')
+        .eq('id', bookingId)
+        .maybeSingle();
+
+      if (existingError || !existingBooking) {
+        console.error("[ManualAssign] Failed to load existing later booking:", existingError);
+        return { success: false, error: existingError?.message || "Booking not found." };
+      }
+
+      if (hasLockedAssignmentStatus(existingBooking.status) && existingBooking.driver_id && existingBooking.driver_id !== driverId) {
+        return {
+          success: false,
+          error: "This ride was already accepted by another driver and cannot be reassigned.",
+        };
+      }
+
+      if (hasLockedAssignmentStatus(existingBooking.status) && existingBooking.driver_id === driverId) {
+        return { success: true };
+      }
+
       const { error } = await supabaseAdmin
         .from('later_bookings')
         .update({
