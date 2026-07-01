@@ -46,12 +46,33 @@ function formatCancelledBy(raw?: string | null): string {
     return who;
 }
 
+function pickStringField(row: Record<string, unknown>, keys: string[]): string | null {
+    for (const key of keys) {
+        const value = row[key];
+        if (typeof value === "string" && value.trim()) return value.trim();
+        if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+    return null;
+}
+
+function pickNumberField(row: Record<string, unknown>, keys: string[]): number | null {
+    for (const key of keys) {
+        const value = row[key];
+        if (typeof value === "number" && Number.isFinite(value)) return value;
+        if (typeof value === "string" && value.trim()) {
+            const parsed = Number(value);
+            if (Number.isFinite(parsed)) return parsed;
+        }
+    }
+    return null;
+}
+
 export default async function DriverDetailsPage({ params }: { params: Promise<{ id: string }> }) {
     const resolvedParams = await params;
     const driverId = resolvedParams.id;
 
     // Clean up stale online statuses before rendering this driver's profile
-    const cutoff = new Date(Date.now() - STALE_THRESHOLD_MINUTES * 60 * 1000).toISOString();
+    const cutoff = new Date(new Date().getTime() - STALE_THRESHOLD_MINUTES * 60 * 1000).toISOString();
     await supabaseAdmin
         .from('drivers')
         .update({ is_online: false, is_available: false })
@@ -87,6 +108,9 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
 
     // Get all ride IDs for this driver
     const driverRideIds = (allDriverRides || []).map(r => r.id);
+    const driverRideIdSet = new Set(driverRideIds);
+    const allDriverRidesById: Record<string, any> = {};
+    (allDriverRides || []).forEach((r: any) => { allDriverRidesById[r.id] = r; });
 
     // Fetch payments from the payments table linked to this driver's rides
     let driverPayments: any[] = [];
@@ -99,6 +123,31 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
         driverPayments = paymentsData || [];
     }
 
+    // Fetch cancellation penalties from Supabase.
+    // Primary source requested by client: `river_deductions`.
+    // Fallback: `rider_deductions` (in case the table name differs by environment).
+    let riverDeductionsRaw: Record<string, unknown>[] = [];
+    for (const tableName of ['river_deductions', 'rider_deductions']) {
+        const { data, error } = await supabaseAdmin
+            .from(tableName)
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(5000);
+
+        if (!error) {
+            riverDeductionsRaw = (data || []) as Record<string, unknown>[];
+            break;
+        }
+
+        // If table doesn't exist, try next fallback; otherwise log and stop.
+        const msg = (error.message || '').toLowerCase();
+        if (msg.includes('does not exist') || msg.includes('relation')) {
+            continue;
+        }
+        console.error(`[DriverIncome] Error fetching ${tableName}:`, error);
+        break;
+    }
+
     // Fetch existing deductions (commission + penalties)
     const { data: deductionsData } = await supabaseAdmin
         .from('driver_deductions')
@@ -109,35 +158,92 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
 
     // ── Cancellation income (rider cancel = +100%, driver cancel = −50%) ───
     const paymentRideIds = new Set(driverPayments.map(p => p.ride_id));
+    const riverPenaltyEntries = (riverDeductionsRaw || [])
+        .map((row: Record<string, unknown>, index: number) => {
+            const rideId = pickStringField(row, ['ride_id', 'rideId', 'booking_id', 'bookingId', 'trip_id', 'tripId', 'reference_ride_id', 'reference']);
+            const rowDriverId = pickStringField(row, ['driver_id', 'driverId', 'driver_uuid', 'driver_user_id', 'user_id']);
+            const matchesDriverId = !!rowDriverId && (rowDriverId === driverId || rowDriverId === driver.user_id);
+            const matchesRideId = !!rideId && driverRideIdSet.has(rideId);
+            if (!matchesDriverId && !matchesRideId) return null;
+
+            const rawAmount = pickNumberField(row, ['amount', 'deduction_amount', 'penalty_amount', 'value', 'total_amount']);
+            if (rawAmount == null || rawAmount === 0) return null;
+
+            // Penalties are deductions from driver income.
+            const signedPenaltyAmount = rawAmount > 0 ? -Math.abs(rawAmount) : rawAmount;
+            if (signedPenaltyAmount >= 0) return null;
+
+            const linkedRide = rideId ? allDriverRidesById[rideId] : null;
+            const rowId = pickStringField(row, ['id', 'uuid', 'deduction_id']) || `${rideId || 'unknown'}-${index}`;
+            const reason = pickStringField(row, ['reason', 'description', 'note', 'deduction_reason', 'penalty_reason', 'title'])
+                || '50% cancellation penalty';
+            const createdAt = pickStringField(row, ['created_at', 'createdAt', 'timestamp', 'updated_at'])
+                || linkedRide?.cancelled_at
+                || linkedRide?.requested_at
+                || linkedRide?.created_at
+                || new Date().toISOString();
+
+            return {
+                id: `river-deduction-${rowId}`,
+                amount: Math.round(signedPenaltyAmount * 100) / 100,
+                status: 'succeeded',
+                currency: 'gbp',
+                payment_method: 'cancellation_fee',
+                created_at: createdAt,
+                ride_id: rideId || `river-deduction-${rowId}`,
+                entry_type: 'cancellation',
+                cancellation_reason: reason,
+                ride_status: linkedRide?.status || 'cancelled',
+                user: { full_name: linkedRide?.rider?.full_name || 'Unknown' },
+            };
+        })
+        .filter(Boolean) as any[];
+
+    // When a ride already has a penalty in river_deductions, use that exact value
+    // and skip computed fallback debits to avoid mismatches/double counting.
+    const ridesWithRiverPenalty = new Set(
+        riverPenaltyEntries
+            .map((e: any) => e.ride_id)
+            .filter((rideId: string) => driverRideIdSet.has(rideId))
+    );
+
     const cancellationEntries = (allDriverRides || [])
         .filter((r: any) =>
             isCancelledStatus(r.status) &&
-            computeCancellationAmount(r) !== 0 &&
             !paymentRideIds.has(r.id)
         )
-        .map((r: any) => ({
-            id: `cancel-${r.id}`,
-            amount: computeCancellationAmount(r),
+        .map((r: any) => ({ ride: r, amount: computeCancellationAmount(r) }))
+        .filter(({ ride, amount }: any) =>
+            amount !== 0 &&
+            // Keep rider/no-show credits computed from ride data,
+            // but read driver penalty debits from river_deductions when present.
+            (amount > 0 || !ridesWithRiverPenalty.has(ride.id))
+        )
+        .map(({ ride, amount }: any) => ({
+            id: `cancel-${ride.id}`,
+            amount,
             status: 'succeeded',
             currency: 'gbp',
             payment_method: 'cancellation_fee',
-            created_at: r.cancelled_at || r.requested_at || r.created_at,
-            ride_id: r.id,
+            created_at: ride.cancelled_at || ride.requested_at || ride.created_at,
+            ride_id: ride.id,
             entry_type: 'cancellation',
-            cancellation_reason: r.cancellation_reason || null,
-            ride_status: r.status,
-            user: { full_name: r.rider?.full_name || 'Unknown' },
+            cancellation_reason: ride.cancellation_reason || null,
+            ride_status: ride.status,
+            user: { full_name: ride.rider?.full_name || 'Unknown' },
         }));
 
-    // Combined income feed: real payments + synthesized cancellation fees.
+    // Combined income feed: real payments + cancellation credits/fees.
+    // Driver penalties come from river_deductions when available.
     const incomeEntries = [
         ...driverPayments.map((p: any) => ({ ...p, entry_type: 'payment' })),
         ...cancellationEntries,
+        ...riverPenaltyEntries,
     ].sort((a: any, b: any) =>
         new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
     );
 
-    const cancellationFeesTotal = cancellationEntries.reduce((sum, e) => sum + (e.amount || 0), 0);
+    const cancellationFeesTotal = [...cancellationEntries, ...riverPenaltyEntries].reduce((sum, e) => sum + (e.amount || 0), 0);
 
     // Calculate income from payments table
     const succeededPayments = driverPayments.filter(p => p.status === 'succeeded');
