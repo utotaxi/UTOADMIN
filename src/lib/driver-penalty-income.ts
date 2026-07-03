@@ -69,3 +69,12 @@ export function sumCommissionDeductions(deductions: Deduction[]): number {
         .filter((d) => d.type === "commission")
         .reduce((sum, d) => sum + Math.abs(d.amount || 0), 0);
 }
+
+/** Ride ids that already have a stored penalty in driver_deductions (skip duplicate credits). */
+export function getPenaltyRideIds(deductions: Deduction[]): Set<string> {
+    const ids = deductions
+        .filter((d) => d.type === "penalty")
+        .map((d) => extractRideIdFromPenaltyReason(d.reason))
+        .filter((id): id is string => Boolean(id));
+    return new Set(ids);
+}

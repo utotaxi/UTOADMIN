@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import DriversListClient from "./DriversListClient";
-import { computeCancellationAmount, isCancelledStatus } from "@/lib/cancellation-income";
+import { computeCancellationAmount, isCancelledStatus, isRiderCancellationCredit } from "@/lib/cancellation-income";
 
 export const dynamic = "force-dynamic";
 
@@ -85,7 +85,7 @@ export default async function DriversPage() {
                 !paymentRideIds.has(r.id)
             ) {
                 const amount = computeCancellationAmount(r);
-                if (amount !== 0) {
+                if (amount > 0 && isRiderCancellationCredit(r.cancellation_reason)) {
                     earningsMap[r.driver_id] = (earningsMap[r.driver_id] || 0) + amount;
                 }
             }

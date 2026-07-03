@@ -19,7 +19,33 @@ export function isCancelledByDriver(raw?: string | null): boolean {
     ) {
         return false;
     }
+    if (r.includes("penalty") || r.includes("50%")) return true;
     if (r.includes("driver")) return true;
+    return false;
+}
+
+/** True only when the cancellation should pay the driver a 100% rider-cancel credit. */
+export function isRiderCancellationCredit(raw?: string | null): boolean {
+    if (isCancelledByDriver(raw)) return false;
+    const r = (raw || "").toLowerCase();
+    if (
+        r.includes("no show") ||
+        r.includes("no-show") ||
+        r.includes("noshow") ||
+        r.includes("did not show") ||
+        r.includes("didn't show")
+    ) {
+        return true;
+    }
+    if (
+        r.includes("rider") ||
+        r.includes("passenger") ||
+        r.includes("customer") ||
+        r.includes("user")
+    ) {
+        return true;
+    }
+    // Unknown / generic "cancelled" must not auto-credit — penalties come from driver_deductions.
     return false;
 }
 
@@ -40,7 +66,10 @@ export function computeCancellationAmount(ride: {
         return -Math.round(base * 0.5 * 100) / 100;
     }
 
-    // Rider, no-show, or unrecognised reason → full fare credit to driver.
+    if (!isRiderCancellationCredit(ride.cancellation_reason)) {
+        return 0;
+    }
+
     return Math.round(base * 100) / 100;
 }
 

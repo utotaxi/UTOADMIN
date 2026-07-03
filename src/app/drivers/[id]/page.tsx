@@ -18,9 +18,11 @@ import DriverApprovalButton from "./DriverApprovalButton";
 import {
     computeCancellationAmount,
     isCancelledStatus,
+    isRiderCancellationCredit,
 } from "@/lib/cancellation-income";
 import {
     extractRideIdFromPenaltyReason,
+    getPenaltyRideIds,
     mapDriverPenaltyDeductionsToIncome,
     sumCommissionDeductions,
 } from "@/lib/driver-penalty-income";
@@ -132,11 +134,14 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
     const paymentRideIds = new Set(driverPayments.map(p => p.ride_id));
     const rideMapForPenalties: Record<string, any> = { ...allDriverRidesById };
     const penaltyIncomeEntries = mapDriverPenaltyDeductionsToIncome(deductions, rideMapForPenalties);
+    const rideIdsWithPenalties = getPenaltyRideIds(deductions);
 
     const cancellationEntries = (allDriverRides || [])
         .filter((r: any) =>
             isCancelledStatus(r.status) &&
-            !paymentRideIds.has(r.id)
+            !paymentRideIds.has(r.id) &&
+            !rideIdsWithPenalties.has(r.id) &&
+            isRiderCancellationCredit(r.cancellation_reason)
         )
         .map((r: any) => ({ ride: r, amount: computeCancellationAmount(r) }))
         .filter(({ amount }: any) => amount > 0)

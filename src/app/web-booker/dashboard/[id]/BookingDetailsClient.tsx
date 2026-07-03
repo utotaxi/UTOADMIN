@@ -42,8 +42,8 @@ export default function BookingDetailsClient({ booking }: { booking: any; driver
     const [returnScheduledTime, setReturnScheduledTime] = useState('');
 
     const [isCancelling, setIsCancelling] = useState(false);
-    const [cancelSuccess, setCancelSuccess] = useState('');
-    const [cancelError, setCancelError] = useState('');
+    const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+    const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
     const handleSave = async () => {
         setIsSubmitting(true);
@@ -87,19 +87,23 @@ export default function BookingDetailsClient({ booking }: { booking: any; driver
     };
 
     const handleCancelBooking = async () => {
-        if (!confirm('Cancel this booking? It will be removed from the marketplace and scheduled rides.')) {
-            return;
-        }
         setIsCancelling(true);
-        setCancelSuccess('');
-        setCancelError('');
+        setToast(null);
         try {
             await cancelBookingAction(booking.id);
-            setCancelSuccess('Booking cancelled successfully. Marketplace and scheduled views have been updated.');
+            setShowCancelConfirm(false);
+            setToast({
+                type: 'success',
+                message: 'Booking cancelled successfully. It has been removed from marketplace and scheduled rides.',
+            });
             router.refresh();
         } catch (error: unknown) {
             console.error("Failed to cancel booking:", error);
-            setCancelError('Failed to cancel booking: ' + (error instanceof Error ? error.message : 'Unknown error'));
+            setShowCancelConfirm(false);
+            setToast({
+                type: 'error',
+                message: 'Failed to cancel booking: ' + (error instanceof Error ? error.message : 'Unknown error'),
+            });
         }
         setIsCancelling(false);
     };
@@ -108,6 +112,88 @@ export default function BookingDetailsClient({ booking }: { booking: any; driver
 
     return (
         <div className="flex flex-col gap-6 w-full">
+            {/* Toast notification */}
+            {toast && (
+                <div
+                    className={`fixed top-6 right-6 z-[10001] flex items-start gap-3 max-w-md px-4 py-3 rounded-xl border shadow-2xl animate-[slideIn_0.25s_ease-out] ${
+                        toast.type === 'success'
+                            ? 'bg-emerald-50 dark:bg-emerald-950/90 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                            : 'bg-rose-50 dark:bg-rose-950/90 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+                    }`}
+                >
+                    {toast.type === 'success' ? (
+                        <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                    ) : (
+                        <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                    )}
+                    <div className="flex-1 text-sm font-medium leading-snug">{toast.message}</div>
+                    <button
+                        onClick={() => setToast(null)}
+                        className="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                        aria-label="Dismiss notification"
+                    >
+                        <X className="w-4 h-4" />
+                    </button>
+                </div>
+            )}
+
+            {/* Cancel confirmation modal */}
+            {showCancelConfirm && (
+                <div
+                    className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4 animate-[fadeIn_0.2s_ease-out]"
+                    onClick={() => !isCancelling && setShowCancelConfirm(false)}
+                >
+                    <div
+                        className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-md overflow-hidden animate-[slideUp_0.3s_ease-out]"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="p-6">
+                            <div className="flex items-start gap-4">
+                                <div className="w-12 h-12 rounded-full bg-rose-100 dark:bg-rose-950/50 flex items-center justify-center flex-shrink-0">
+                                    <Ban className="w-6 h-6 text-rose-600 dark:text-rose-400" />
+                                </div>
+                                <div className="flex-1">
+                                    <h3 className="text-lg font-bold text-foreground mb-1">Cancel this booking?</h3>
+                                    <p className="text-sm text-muted-foreground leading-relaxed">
+                                        Reference <span className="font-mono font-semibold text-foreground">{booking.reference || '—'}</span> will be cancelled and removed from the marketplace and scheduled rides immediately.
+                                    </p>
+                                    {booking.pickup_address && (
+                                        <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border">
+                                            <span className="font-medium text-foreground">Pickup:</span> {booking.pickup_address}
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex items-center justify-end gap-3 px-6 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-border">
+                            <button
+                                onClick={() => setShowCancelConfirm(false)}
+                                disabled={isCancelling}
+                                className="px-4 py-2.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
+                            >
+                                Keep Booking
+                            </button>
+                            <button
+                                onClick={handleCancelBooking}
+                                disabled={isCancelling}
+                                className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-sm transition-colors disabled:opacity-50"
+                            >
+                                {isCancelling ? (
+                                    <>
+                                        <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                                        Cancelling...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Ban className="w-4 h-4" />
+                                        Yes, Cancel Booking
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
             {/* Action Bar */}
             <div className="flex flex-wrap items-center gap-3 w-full bg-slate-50 dark:bg-slate-900 border rounded-lg p-3 shadow-sm">
                 {!isEditing && !isBookingReturn && (
@@ -258,35 +344,13 @@ export default function BookingDetailsClient({ booking }: { booking: any; driver
                         ) : (
                             <div className="flex flex-col gap-3">
                                 <button
-                                    onClick={handleCancelBooking}
+                                    onClick={() => setShowCancelConfirm(true)}
                                     disabled={isCancelling}
                                     className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-semibold transition shadow disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    {isCancelling ? (
-                                        <>
-                                            <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                                            Cancelling...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Ban className="w-4 h-4" />
-                                            Cancel Booking
-                                        </>
-                                    )}
+                                    <Ban className="w-4 h-4" />
+                                    Cancel Booking
                                 </button>
-
-                                {cancelSuccess && (
-                                    <div className="flex items-start gap-2 p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg text-xs text-emerald-700 dark:text-emerald-400 font-medium">
-                                        <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                                        {cancelSuccess}
-                                    </div>
-                                )}
-                                {cancelError && (
-                                    <div className="flex items-start gap-2 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-lg text-xs text-rose-700 dark:text-rose-400 font-medium">
-                                        <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                                        {cancelError}
-                                    </div>
-                                )}
                             </div>
                         )}
                     </div>
@@ -405,6 +469,20 @@ export default function BookingDetailsClient({ booking }: { booking: any; driver
                     </div>
                 </div>
             </div>
+            <style>{`
+                @keyframes fadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
+                }
+                @keyframes slideUp {
+                    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+                    to { opacity: 1; transform: translateY(0) scale(1); }
+                }
+                @keyframes slideIn {
+                    from { opacity: 0; transform: translateX(12px); }
+                    to { opacity: 1; transform: translateX(0); }
+                }
+            `}</style>
         </div>
     );
 }
