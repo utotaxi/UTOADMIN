@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { updateBookingAction, duplicateBookingAction, assignDriverAction } from './actions';
-import { MapPin, Clock, Calendar, Car, CreditCard, User as UserIcon, ScrollText, Edit2, Copy, Repeat, Save, X, UserCheck, CheckCircle2, AlertCircle } from "lucide-react";
+import { updateBookingAction, duplicateBookingAction, cancelBookingAction } from './actions';
+import { MapPin, Clock, Calendar, Car, CreditCard, User as UserIcon, ScrollText, Edit2, Copy, Repeat, Save, X, Ban, CheckCircle2, AlertCircle } from "lucide-react";
 import { formatUKDate } from "@/lib/utils";
 
 function StatusBadge({ status }: { status: string }) {
@@ -26,7 +26,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export default function BookingDetailsClient({ booking, drivers = [] }: { booking: any; drivers?: any[] }) {
+export default function BookingDetailsClient({ booking }: { booking: any; drivers?: any[] }) {
     const router = useRouter();
     const [isEditing, setIsEditing] = useState(false);
     const [editData, setEditData] = useState({
@@ -41,11 +41,9 @@ export default function BookingDetailsClient({ booking, drivers = [] }: { bookin
     const [isBookingReturn, setIsBookingReturn] = useState(false);
     const [returnScheduledTime, setReturnScheduledTime] = useState('');
 
-    // Driver assignment state
-    const [selectedDriverId, setSelectedDriverId] = useState(booking.assigned_driver_id || '');
-    const [isAssigning, setIsAssigning] = useState(false);
-    const [assignSuccess, setAssignSuccess] = useState('');
-    const [assignError, setAssignError] = useState('');
+    const [isCancelling, setIsCancelling] = useState(false);
+    const [cancelSuccess, setCancelSuccess] = useState('');
+    const [cancelError, setCancelError] = useState('');
 
     const handleSave = async () => {
         setIsSubmitting(true);
@@ -88,26 +86,25 @@ export default function BookingDetailsClient({ booking, drivers = [] }: { bookin
         setIsBookingReturn(false);
     };
 
-    const handleAssignDriver = async () => {
-        if (!selectedDriverId) {
-            setAssignError('Please select a driver to assign.');
+    const handleCancelBooking = async () => {
+        if (!confirm('Cancel this booking? It will be removed from the marketplace and scheduled rides.')) {
             return;
         }
-        setIsAssigning(true);
-        setAssignSuccess('');
-        setAssignError('');
+        setIsCancelling(true);
+        setCancelSuccess('');
+        setCancelError('');
         try {
-            const result = await assignDriverAction(booking.id, selectedDriverId);
-            setAssignSuccess(`✅ Driver "${result.driverName}" successfully assigned and notified!`);
+            await cancelBookingAction(booking.id);
+            setCancelSuccess('Booking cancelled successfully. Marketplace and scheduled views have been updated.');
             router.refresh();
         } catch (error: unknown) {
-            console.error("Failed to assign driver:", error);
-            setAssignError('Failed to assign driver: ' + (error instanceof Error ? error.message : 'Unknown error'));
+            console.error("Failed to cancel booking:", error);
+            setCancelError('Failed to cancel booking: ' + (error instanceof Error ? error.message : 'Unknown error'));
         }
-        setIsAssigning(false);
+        setIsCancelling(false);
     };
 
-    const canAssign = booking.status !== 'completed' && booking.status !== 'cancelled';
+    const canCancel = booking.status !== 'completed' && booking.status !== 'cancelled';
 
     return (
         <div className="flex flex-col gap-6 w-full">
@@ -245,73 +242,49 @@ export default function BookingDetailsClient({ booking, drivers = [] }: { bookin
                         </div>
                     </div>
 
-                    {/* ── Manual Driver Assignment Card ── */}
-                    <div className="rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/10 text-card-foreground shadow-sm p-5">
-                        <h3 className="font-bold text-sm mb-1 flex items-center gap-2 text-violet-700 dark:text-violet-300 uppercase tracking-wider">
-                            <UserCheck className="w-4 h-4" /> Assign Driver Manually
+                    {/* ── Admin Cancel Booking ── */}
+                    <div className="rounded-xl border-2 border-rose-200 dark:border-rose-800 bg-rose-50/50 dark:bg-rose-950/10 text-card-foreground shadow-sm p-5">
+                        <h3 className="font-bold text-sm mb-1 flex items-center gap-2 text-rose-700 dark:text-rose-300 uppercase tracking-wider">
+                            <Ban className="w-4 h-4" /> Cancel Booking
                         </h3>
                         <p className="text-xs text-muted-foreground mb-3">
-                            Override automatic dispatch — pick any approved driver from the list.
+                            Cancel this booking as admin. It will be removed from marketplace and scheduled rides immediately.
                         </p>
 
-                        {!canAssign ? (
+                        {!canCancel ? (
                             <p className="text-xs text-muted-foreground italic">
-                                Cannot assign a driver to a {booking.status} booking.
+                                This booking is already {booking.status} and cannot be cancelled again.
                             </p>
                         ) : (
                             <div className="flex flex-col gap-3">
-                                <select
-                                    className="border border-violet-300 dark:border-violet-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-900 w-full focus:ring-2 focus:ring-violet-400 focus:outline-none"
-                                    value={selectedDriverId}
-                                    onChange={e => {
-                                        setSelectedDriverId(e.target.value);
-                                        setAssignSuccess('');
-                                        setAssignError('');
-                                    }}
-                                >
-                                    <option value="">— Select a driver —</option>
-                                    {drivers.map((driver: any) => {
-                                        const driverUser = driver.user as any;
-                                        const name = driverUser?.full_name || 'Unknown';
-                                        const status = driver.is_online
-                                            ? driver.is_available ? '🟢 Online' : '🟡 On Trip'
-                                            : '⚫ Offline';
-                                        return (
-                                            <option key={driver.id} value={driver.id}>
-                                                {status} — {name} ({driver.vehicle_make} {driver.vehicle_model} · {driver.license_plate})
-                                            </option>
-                                        );
-                                    })}
-                                </select>
-
                                 <button
-                                    onClick={handleAssignDriver}
-                                    disabled={isAssigning || !selectedDriverId}
-                                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-semibold transition shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                                    onClick={handleCancelBooking}
+                                    disabled={isCancelling}
+                                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-semibold transition shadow disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    {isAssigning ? (
+                                    {isCancelling ? (
                                         <>
                                             <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                                            Assigning...
+                                            Cancelling...
                                         </>
                                     ) : (
                                         <>
-                                            <UserCheck className="w-4 h-4" />
-                                            Assign Driver
+                                            <Ban className="w-4 h-4" />
+                                            Cancel Booking
                                         </>
                                     )}
                                 </button>
 
-                                {assignSuccess && (
+                                {cancelSuccess && (
                                     <div className="flex items-start gap-2 p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg text-xs text-emerald-700 dark:text-emerald-400 font-medium">
                                         <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                                        {assignSuccess}
+                                        {cancelSuccess}
                                     </div>
                                 )}
-                                {assignError && (
+                                {cancelError && (
                                     <div className="flex items-start gap-2 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-lg text-xs text-rose-700 dark:text-rose-400 font-medium">
                                         <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                                        {assignError}
+                                        {cancelError}
                                     </div>
                                 )}
                             </div>

@@ -126,6 +126,86 @@ export async function assignDriverAction(bookingId: string, driverId: string) {
 
     revalidatePath(`/web-booker/dashboard/${bookingId}`);
     revalidatePath('/web-booker/dashboard');
+    revalidatePath('/scheduled-rides');
 
     return { success: true, driverName };
+}
+
+/**
+ * Cancel a web-booker booking as admin.
+ * Removes it from marketplace/scheduled views and syncs related later_bookings rows.
+ */
+export async function cancelBookingAction(bookingId: string, reason?: string) {
+    const { data: booking, error: bookingErr } = await supabaseAdmin
+        .from('web_booker')
+        .select('*')
+        .eq('id', bookingId)
+        .single();
+
+    if (bookingErr || !booking) {
+        throw new Error('Booking not found: ' + (bookingErr?.message || 'Unknown error'));
+    }
+
+    if (booking.status === 'completed') {
+        throw new Error('Completed bookings cannot be cancelled.');
+    }
+    if (booking.status === 'cancelled') {
+        return { success: true, alreadyCancelled: true };
+    }
+
+    const cancelNote = reason?.trim() || 'Cancelled by admin from Web Booker dashboard.';
+
+    const { error: updateErr } = await supabaseAdmin
+        .from('web_booker')
+        .update({
+            status: 'cancelled',
+            assigned_driver_id: null,
+            assigned_driver_name: null,
+            dispatch_mode: 'manual',
+            dispatch_note: cancelNote,
+        })
+        .eq('id', bookingId);
+
+    if (updateErr) throw new Error('Failed to cancel booking: ' + updateErr.message);
+
+    // Remove matching marketplace / later booking rows so drivers no longer see the job.
+    if (booking.pickup_address) {
+        let laterQuery = supabaseAdmin
+            .from('later_bookings')
+            .update({
+                status: 'cancelled',
+                cancellation_reason: cancelNote,
+            })
+            .eq('pickup_address', booking.pickup_address)
+            .in('status', ['scheduled', 'marketplace', 'driver_accepted', 'searching_driver', 'pending']);
+
+        if (booking.scheduled_time) {
+            const pickupAt = new Date(booking.scheduled_time);
+            const windowStart = new Date(pickupAt.getTime() - 5 * 60 * 1000).toISOString();
+            const windowEnd = new Date(pickupAt.getTime() + 5 * 60 * 1000).toISOString();
+            laterQuery = laterQuery.gte('pickup_at', windowStart).lte('pickup_at', windowEnd);
+        }
+
+        const { error: laterErr } = await laterQuery;
+        if (laterErr) {
+            console.warn('[cancelBookingAction] Failed to sync later_bookings:', laterErr);
+        }
+    }
+
+    // Close any pending driver notifications for this booking.
+    try {
+        await supabaseAdmin
+            .from('driver_notifications')
+            .update({ status: 'cancelled' })
+            .eq('booking_id', bookingId)
+            .eq('booking_source', 'web_booker');
+    } catch (notifyErr) {
+        console.warn('[cancelBookingAction] Failed to cancel driver notifications:', notifyErr);
+    }
+
+    revalidatePath(`/web-booker/dashboard/${bookingId}`);
+    revalidatePath('/web-booker/dashboard');
+    revalidatePath('/scheduled-rides');
+
+    return { success: true };
 }

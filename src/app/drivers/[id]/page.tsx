@@ -11,7 +11,6 @@ import {
     TrendingUp,
     TrendingDown
 } from "lucide-react";
-import { format } from "date-fns";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DriverIncomePanel, type Deduction } from "./DriverIncomePanel";
@@ -20,6 +19,12 @@ import {
     computeCancellationAmount,
     isCancelledStatus,
 } from "@/lib/cancellation-income";
+import {
+    extractRideIdFromPenaltyReason,
+    mapDriverPenaltyDeductionsToIncome,
+    sumCommissionDeductions,
+} from "@/lib/driver-penalty-income";
+import { formatUkDateShort, formatUkTime } from "@/lib/uk-datetime";
 
 export const dynamic = "force-dynamic";
 
@@ -44,27 +49,6 @@ function formatCancelledBy(raw?: string | null): string {
         return `${who} — ${detail}`;
     }
     return who;
-}
-
-function pickStringField(row: Record<string, unknown>, keys: string[]): string | null {
-    for (const key of keys) {
-        const value = row[key];
-        if (typeof value === "string" && value.trim()) return value.trim();
-        if (typeof value === "number" && Number.isFinite(value)) return String(value);
-    }
-    return null;
-}
-
-function pickNumberField(row: Record<string, unknown>, keys: string[]): number | null {
-    for (const key of keys) {
-        const value = row[key];
-        if (typeof value === "number" && Number.isFinite(value)) return value;
-        if (typeof value === "string" && value.trim()) {
-            const parsed = Number(value);
-            if (Number.isFinite(parsed)) return parsed;
-        }
-    }
-    return null;
 }
 
 export default async function DriverDetailsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -108,7 +92,6 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
 
     // Get all ride IDs for this driver
     const driverRideIds = (allDriverRides || []).map(r => r.id);
-    const driverRideIdSet = new Set(driverRideIds);
     const allDriverRidesById: Record<string, any> = {};
     (allDriverRides || []).forEach((r: any) => { allDriverRidesById[r.id] = r; });
 
@@ -123,32 +106,7 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
         driverPayments = paymentsData || [];
     }
 
-    // Fetch cancellation penalties from Supabase.
-    // Primary source requested by client: `river_deductions`.
-    // Fallback: `rider_deductions` (in case the table name differs by environment).
-    let riverDeductionsRaw: Record<string, unknown>[] = [];
-    for (const tableName of ['river_deductions', 'rider_deductions']) {
-        const { data, error } = await supabaseAdmin
-            .from(tableName)
-            .select('*')
-            .order('created_at', { ascending: false })
-            .limit(5000);
-
-        if (!error) {
-            riverDeductionsRaw = (data || []) as Record<string, unknown>[];
-            break;
-        }
-
-        // If table doesn't exist, try next fallback; otherwise log and stop.
-        const msg = (error.message || '').toLowerCase();
-        if (msg.includes('does not exist') || msg.includes('relation')) {
-            continue;
-        }
-        console.error(`[DriverIncome] Error fetching ${tableName}:`, error);
-        break;
-    }
-
-    // Fetch existing deductions (commission + penalties)
+    // Fetch existing deductions (commission + penalties) from Supabase.
     const { data: deductionsData } = await supabaseAdmin
         .from('driver_deductions')
         .select('*')
@@ -156,56 +114,24 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
         .order('created_at', { ascending: false });
     const deductions: Deduction[] = (deductionsData || []) as Deduction[];
 
-    // ── Cancellation income (rider cancel = +100%, driver cancel = −50%) ───
+    // Load ride details referenced in penalty reasons (for route/rider display).
+    const penaltyRideIds = deductions
+        .filter((d) => d.type === "penalty")
+        .map((d) => extractRideIdFromPenaltyReason(d.reason))
+        .filter((id): id is string => Boolean(id));
+    const missingPenaltyRideIds = [...new Set(penaltyRideIds)].filter((id) => !allDriverRidesById[id]);
+    if (missingPenaltyRideIds.length > 0) {
+        const { data: penaltyRides } = await supabaseAdmin
+            .from('rides')
+            .select('*, rider:rider_id(full_name)')
+            .in('id', missingPenaltyRideIds);
+        (penaltyRides || []).forEach((r: any) => { allDriverRidesById[r.id] = r; });
+    }
+
+    // ── Cancellation income: rider cancel = +100% credit; penalties from driver_deductions ───
     const paymentRideIds = new Set(driverPayments.map(p => p.ride_id));
-    const riverPenaltyEntries = (riverDeductionsRaw || [])
-        .map((row: Record<string, unknown>, index: number) => {
-            const rideId = pickStringField(row, ['ride_id', 'rideId', 'booking_id', 'bookingId', 'trip_id', 'tripId', 'reference_ride_id', 'reference']);
-            const rowDriverId = pickStringField(row, ['driver_id', 'driverId', 'driver_uuid', 'driver_user_id', 'user_id']);
-            const matchesDriverId = !!rowDriverId && (rowDriverId === driverId || rowDriverId === driver.user_id);
-            const matchesRideId = !!rideId && driverRideIdSet.has(rideId);
-            if (!matchesDriverId && !matchesRideId) return null;
-
-            const rawAmount = pickNumberField(row, ['amount', 'deduction_amount', 'penalty_amount', 'value', 'total_amount']);
-            if (rawAmount == null || rawAmount === 0) return null;
-
-            // Penalties are deductions from driver income.
-            const signedPenaltyAmount = rawAmount > 0 ? -Math.abs(rawAmount) : rawAmount;
-            if (signedPenaltyAmount >= 0) return null;
-
-            const linkedRide = rideId ? allDriverRidesById[rideId] : null;
-            const rowId = pickStringField(row, ['id', 'uuid', 'deduction_id']) || `${rideId || 'unknown'}-${index}`;
-            const reason = pickStringField(row, ['reason', 'description', 'note', 'deduction_reason', 'penalty_reason', 'title'])
-                || '50% cancellation penalty';
-            const createdAt = pickStringField(row, ['created_at', 'createdAt', 'timestamp', 'updated_at'])
-                || linkedRide?.cancelled_at
-                || linkedRide?.requested_at
-                || linkedRide?.created_at
-                || new Date().toISOString();
-
-            return {
-                id: `river-deduction-${rowId}`,
-                amount: Math.round(signedPenaltyAmount * 100) / 100,
-                status: 'succeeded',
-                currency: 'gbp',
-                payment_method: 'cancellation_fee',
-                created_at: createdAt,
-                ride_id: rideId || `river-deduction-${rowId}`,
-                entry_type: 'cancellation',
-                cancellation_reason: reason,
-                ride_status: linkedRide?.status || 'cancelled',
-                user: { full_name: linkedRide?.rider?.full_name || 'Unknown' },
-            };
-        })
-        .filter(Boolean) as any[];
-
-    // When a ride already has a penalty in river_deductions, use that exact value
-    // and skip computed fallback debits to avoid mismatches/double counting.
-    const ridesWithRiverPenalty = new Set(
-        riverPenaltyEntries
-            .map((e: any) => e.ride_id)
-            .filter((rideId: string) => driverRideIdSet.has(rideId))
-    );
+    const rideMapForPenalties: Record<string, any> = { ...allDriverRidesById };
+    const penaltyIncomeEntries = mapDriverPenaltyDeductionsToIncome(deductions, rideMapForPenalties);
 
     const cancellationEntries = (allDriverRides || [])
         .filter((r: any) =>
@@ -213,12 +139,7 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
             !paymentRideIds.has(r.id)
         )
         .map((r: any) => ({ ride: r, amount: computeCancellationAmount(r) }))
-        .filter(({ ride, amount }: any) =>
-            amount !== 0 &&
-            // Keep rider/no-show credits computed from ride data,
-            // but read driver penalty debits from river_deductions when present.
-            (amount > 0 || !ridesWithRiverPenalty.has(ride.id))
-        )
+        .filter(({ amount }: any) => amount > 0)
         .map(({ ride, amount }: any) => ({
             id: `cancel-${ride.id}`,
             amount,
@@ -233,17 +154,16 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
             user: { full_name: ride.rider?.full_name || 'Unknown' },
         }));
 
-    // Combined income feed: real payments + cancellation credits/fees.
-    // Driver penalties come from river_deductions when available.
+    // Combined income feed: payments + rider cancellation credits + penalty debits.
     const incomeEntries = [
         ...driverPayments.map((p: any) => ({ ...p, entry_type: 'payment' })),
         ...cancellationEntries,
-        ...riverPenaltyEntries,
+        ...penaltyIncomeEntries,
     ].sort((a: any, b: any) =>
         new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
     );
 
-    const cancellationFeesTotal = [...cancellationEntries, ...riverPenaltyEntries].reduce((sum, e) => sum + (e.amount || 0), 0);
+    const cancellationFeesTotal = [...cancellationEntries, ...penaltyIncomeEntries].reduce((sum, e) => sum + (e.amount || 0), 0);
 
     // Calculate income from payments table
     const succeededPayments = driverPayments.filter(p => p.status === 'succeeded');
@@ -253,7 +173,10 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
     const totalEarnedFromPayments = succeededPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
     const pendingIncome = pendingPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
     const failedIncome = failedPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
-    const totalDeductions = deductions.reduce((sum, d) => sum + (d.amount || 0), 0);
+    const totalCommissionDeductions = sumCommissionDeductions(deductions);
+    const totalPenaltyDeductions = deductions
+        .filter((d) => d.type === "penalty")
+        .reduce((sum, d) => sum + Math.abs(d.amount || 0), 0);
 
     // Also compute from rides as a fallback / combined total
     const succeededPaymentRideIds = new Set(succeededPayments.map(p => p.ride_id));
@@ -266,7 +189,8 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
     // Use the higher of the two (payments table is the source of truth if
     // available, otherwise use rides) and always add cancellation-fee income.
     const totalEarnings = (totalEarnedFromPayments > 0 ? totalEarnedFromPayments : totalEarningsFromRides) + cancellationFeesTotal;
-    const effectiveIncome = Math.max(0, totalEarnings - totalDeductions);
+    // Penalties are already included in cancellationFeesTotal; only subtract manual commissions here.
+    const effectiveIncome = Math.max(0, totalEarnings - totalCommissionDeductions);
 
     // Build a map of ride_id -> ride details for the payment history
     const rideMap: Record<string, any> = {};
@@ -388,7 +312,7 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
                             <p className="text-[10px] text-muted-foreground mt-1">Rides completed &amp; paid</p>
                         </div>
                         {/* Effective Income card — replaces Driver Rating when deductions exist, otherwise shows rating */}
-                        {totalDeductions > 0 ? (
+                        {totalCommissionDeductions > 0 ? (
                             <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 text-card-foreground shadow-sm p-5">
                                 <div className="flex items-center justify-between mb-2">
                                     <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Effective Income</p>
@@ -397,7 +321,10 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
                                 <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
                                     £{effectiveIncome.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                 </p>
-                                <p className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 mt-1">After £{totalDeductions.toFixed(2)} deductions</p>
+                                <p className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 mt-1">
+                                    After £{totalCommissionDeductions.toFixed(2)} commission
+                                    {totalPenaltyDeductions > 0 ? ` · £${totalPenaltyDeductions.toFixed(2)} penalties applied` : ''}
+                                </p>
                             </div>
                         ) : (
                             <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-5 glass">
@@ -439,7 +366,7 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
                                     <div key={ride.id} className="p-4 rounded-lg border bg-slate-50/50 dark:bg-slate-900/50 flex flex-col sm:flex-row gap-4 justify-between sm:items-center">
                                         <div className="flex flex-col flex-1 max-w-[280px]">
                                             <span className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                                                <Clock className="w-3 h-3" /> {ride.requested_at ? format(new Date(ride.requested_at), 'MMM dd, yyyy - HH:mm') : ''}
+                                                <Clock className="w-3 h-3" /> {ride.requested_at ? `${formatUkDateShort(ride.requested_at)} - ${formatUkTime(ride.requested_at)}` : ''}
                                             </span>
                                             <div className="flex items-start gap-2 text-sm mb-1.5">
                                                 <MapPin className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />

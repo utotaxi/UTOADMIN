@@ -21,26 +21,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-const UK_TIME_ZONE = 'Europe/London';
-const UK_DATE_FORMATTER = new Intl.DateTimeFormat('en-GB', {
-  timeZone: UK_TIME_ZONE,
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-});
-const UK_TIME_FORMATTER = new Intl.DateTimeFormat('en-GB', {
-  timeZone: UK_TIME_ZONE,
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
-});
-const UK_REPORT_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
-  timeZone: UK_TIME_ZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
+import { formatUkDateNumeric, formatUkTime, UK_REPORT_DATE_FORMATTER } from '@/lib/uk-datetime';
 
 interface RideData {
   id: string;
@@ -130,14 +111,14 @@ function getStatusIcon(status: string) {
 function formatDate(dateStr: string | undefined): string {
   if (!dateStr) return '—';
   try {
-    return UK_DATE_FORMATTER.format(new Date(dateStr));
+    return formatUkDateNumeric(new Date(dateStr));
   } catch { return '—'; }
 }
 
 function formatTime(dateStr: string | undefined): string {
   if (!dateStr) return '—';
   try {
-    return UK_TIME_FORMATTER.format(new Date(dateStr));
+    return formatUkTime(new Date(dateStr));
   } catch { return '—'; }
 }
 
@@ -176,7 +157,7 @@ function formatReportDateTime(dateStr: string | undefined): string {
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return '';
   const date = UK_REPORT_DATE_FORMATTER.format(d); // YYYY-MM-DD in UK timezone
-  const time = UK_TIME_FORMATTER.format(d);
+  const time = formatUkTime(d);
   return `${date} ${time}`;
 }
 
@@ -204,7 +185,7 @@ function getPHV(ride: RideData): string {
     const d = new Date(expiryRaw);
     expiry = isNaN(d.getTime())
       ? String(expiryRaw)
-      : UK_DATE_FORMATTER.format(d);
+      : formatUkDateNumeric(d);
   }
   const detail = [number, expiry].filter(Boolean).join('/');
   if (plate && detail) return `${plate} - ${detail}`;

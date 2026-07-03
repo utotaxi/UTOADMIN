@@ -26,6 +26,7 @@ import {
     Loader2
 } from "lucide-react";
 import { addDeduction, deleteDeduction } from "./actions";
+import { formatUkDateShort, formatUkTime, UK_REPORT_DATE_FORMATTER } from "@/lib/uk-datetime";
 
 type Payment = {
     id: string;
@@ -81,11 +82,8 @@ type Props = {
 type Tab = "income" | "commission" | "penalty";
 
 function formatDate(dateStr: string, fmt: "full" | "short" | "time" = "full") {
-    const d = new Date(dateStr);
-    if (fmt === "time") {
-        return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-    }
-    return d.toLocaleDateString("en-GB", { month: "short", day: "numeric", year: "numeric" });
+    if (fmt === "time") return formatUkTime(dateStr);
+    return formatUkDateShort(dateStr);
 }
 
 function getPaymentStatusStyle(status: string) {
@@ -225,8 +223,8 @@ function generateCSV(
         const date = new Date(p.created_at);
         const isCancellation = p.entry_type === "cancellation";
         lines.push([
-            date.toLocaleDateString("en-CA"),
-            date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+            UK_REPORT_DATE_FORMATTER.format(date),
+            formatUkTime(date),
             escapeCsvField(p.user?.full_name || "Unknown"),
             escapeCsvField(p.user?.email || ""),
             escapeCsvField(ride?.pickup_address || "-"),
@@ -480,7 +478,7 @@ function DeductionRow({
                 <p className="text-[10px] text-muted-foreground">{formatDate(deduction.created_at, "short")}</p>
             </div>
             <span className="font-bold text-sm text-rose-600 dark:text-rose-400 mr-2">
-                -£{deduction.amount.toFixed(2)}
+                -£{Math.abs(deduction.amount).toFixed(2)}
             </span>
             <button
                 onClick={handleDelete}
@@ -512,7 +510,7 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
     const filteredPayments = useMemo(() => {
         if (!dateFrom && !dateTo) return payments;
         return payments.filter(p => {
-            const pDate = new Date(p.created_at).toLocaleDateString("en-CA");
+            const pDate = UK_REPORT_DATE_FORMATTER.format(new Date(p.created_at));
             if (dateFrom && pDate < dateFrom) return false;
             if (dateTo && pDate > dateTo) return false;
             return true;
@@ -547,15 +545,22 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
     const commissions = useMemo(() => deductions.filter(d => d.type === "commission"), [deductions]);
     const penalties = useMemo(() => deductions.filter(d => d.type === "penalty"), [deductions]);
 
-    const totalCommissions = useMemo(() => commissions.reduce((s, d) => s + d.amount, 0), [commissions]);
-    const totalPenalties = useMemo(() => penalties.reduce((s, d) => s + d.amount, 0), [penalties]);
-    const totalDeductions = totalCommissions + totalPenalties;
+    const totalCommissions = useMemo(
+        () => commissions.reduce((s, d) => s + Math.abs(d.amount), 0),
+        [commissions]
+    );
+    const totalPenalties = useMemo(
+        () => penalties.reduce((s, d) => s + Math.abs(d.amount), 0),
+        [penalties]
+    );
+    const totalManualDeductions = totalCommissions;
 
     const grossEarnings = useMemo(() =>
         payments.filter(p => p.status === "succeeded").reduce((s, p) => s + (p.amount || 0), 0),
         [payments]
     );
-    const effectiveIncome = Math.max(0, grossEarnings - totalDeductions);
+    // Penalties are already reflected as negative income entries; only subtract commissions here.
+    const effectiveIncome = Math.max(0, grossEarnings - totalManualDeductions);
 
     const getFileName = useCallback((groupBy: string, ext: string) => {
         const safeName = driverInfo.name.replace(/[^a-zA-Z0-9]/g, "_");
@@ -612,13 +617,19 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
     return (
         <div className="rounded-xl border bg-card text-card-foreground shadow-sm glass overflow-hidden">
             {/* Effective Income Banner */}
-            {totalDeductions > 0 && (
+            {totalManualDeductions > 0 && (
                 <div className="px-5 py-3 bg-gradient-to-r from-slate-900 to-slate-800 dark:from-slate-950 dark:to-slate-900 border-b flex items-center justify-between flex-wrap gap-3">
                     <div className="flex items-center gap-2 text-slate-300 text-xs">
                         <TrendingDown className="w-4 h-4 text-rose-400" />
                         <span>Gross Earnings <span className="font-bold text-white">£{grossEarnings.toFixed(2)}</span></span>
                         <span className="text-slate-500">—</span>
-                        <span>Deductions <span className="font-bold text-rose-400">£{totalDeductions.toFixed(2)}</span></span>
+                        <span>Commission <span className="font-bold text-rose-400">£{totalManualDeductions.toFixed(2)}</span></span>
+                        {totalPenalties > 0 && (
+                            <>
+                                <span className="text-slate-500">·</span>
+                                <span>Penalties <span className="font-bold text-rose-400">£{totalPenalties.toFixed(2)}</span> (in history)</span>
+                            </>
+                        )}
                     </div>
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Effective Income</span>
@@ -891,9 +902,9 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                                                     )}
                                                 </td>
                                                 <td className="px-5 py-3.5 text-xs text-muted-foreground capitalize">
-                                                    {payment.entry_type === "cancellation"
-                                                        ? getCancellationAmountLabel(payment.amount || 0)
-                                                        : (payment.payment_method?.replace("_", " ") || "card")}
+                                                        {payment.entry_type === "cancellation"
+                                                            ? (payment.cancellation_reason || getCancellationAmountLabel(payment.amount || 0))
+                                                            : (payment.payment_method?.replace("_", " ") || "card")}
                                                 </td>
                                             </tr>
                                         );

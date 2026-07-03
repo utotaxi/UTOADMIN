@@ -14,21 +14,9 @@ import {
     ArrowLeft,
 } from "lucide-react";
 import AssignDriverButton from "./AssignDriverButton";
+import { formatUkDateShort, formatUkTime } from "@/lib/uk-datetime";
 
 export const dynamic = "force-dynamic";
-const UK_TIME_ZONE = "Europe/London";
-const UK_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
-    timeZone: UK_TIME_ZONE,
-    month: "short",
-    day: "2-digit",
-    year: "numeric",
-});
-const UK_TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
-    timeZone: UK_TIME_ZONE,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-});
 
 // Map web_booker statuses onto the scheduled-ride display statuses.
 function mapWebBookerStatus(status?: string): string {
@@ -81,8 +69,8 @@ function fmtDate(value: unknown, pattern: string): string {
     if (!value) return '—';
     const d = new Date(value as string);
     if (Number.isNaN(d.getTime())) return '—';
-    if (pattern === 'HH:mm') return UK_TIME_FORMATTER.format(d);
-    return UK_DATE_FORMATTER.format(d);
+    if (pattern === 'HH:mm') return formatUkTime(d);
+    return formatUkDateShort(d);
 }
 
 function nonEmptyString(value: unknown): string | null {
