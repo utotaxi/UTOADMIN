@@ -197,9 +197,8 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
     // Penalties are already included in cancellationFeesTotal; only subtract manual commissions here.
     const effectiveIncome = Math.max(0, totalEarnings - totalCommissionDeductions);
 
-    // Build a map of ride_id -> ride details for the payment history
-    const rideMap: Record<string, any> = {};
-    (allDriverRides || []).forEach(r => { rideMap[r.id] = r; });
+    // Build a map of ride_id -> ride details for the payment history (incl. penalty-linked rides).
+    const rideMap: Record<string, any> = { ...allDriverRidesById };
 
     // Prepare driver info for the income panel
     const driverInfo = {

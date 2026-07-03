@@ -25,6 +25,8 @@ export type PenaltyIncomeEntry = {
 
 type RideLike = {
     id?: string;
+    pickup_address?: string;
+    dropoff_address?: string;
     status?: string;
     cancelled_at?: string | null;
     requested_at?: string | null;

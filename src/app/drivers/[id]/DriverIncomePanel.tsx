@@ -839,28 +839,17 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                                                     </div>
                                                 </td>
                                                 <td className="px-5 py-3.5">
-                                                    {linkedRide ? (
+                                                    {linkedRide?.pickup_address || linkedRide?.dropoff_address ? (
                                                         <div className="flex flex-col gap-0.5 max-w-[200px]">
                                                             <span className="text-[10px] flex items-center gap-1 truncate">
                                                                 <MapPin className="w-2.5 h-2.5 text-emerald-500 flex-shrink-0" />
-                                                                <span className="truncate">{linkedRide.pickup_address}</span>
+                                                                <span className="truncate">{linkedRide.pickup_address || "—"}</span>
                                                             </span>
                                                             <span className="text-[10px] flex items-center gap-1 truncate">
                                                                 <MapPin className="w-2.5 h-2.5 text-rose-500 flex-shrink-0" />
-                                                                <span className="truncate">{linkedRide.dropoff_address}</span>
+                                                                <span className="truncate">{linkedRide.dropoff_address || "—"}</span>
                                                             </span>
-                                                            {payment.entry_type === "cancellation" && (
-                                                                <span className="text-[10px] flex items-center gap-1 text-rose-600 dark:text-rose-400 font-semibold mt-0.5">
-                                                                    <AlertTriangle className="w-2.5 h-2.5 flex-shrink-0" />
-                                                                    {formatCancellationReason(payment.cancellation_reason)}
-                                                                </span>
-                                                            )}
                                                         </div>
-                                                    ) : payment.entry_type === "cancellation" ? (
-                                                        <span className="text-[10px] flex items-center gap-1 text-rose-600 dark:text-rose-400 font-semibold">
-                                                            <AlertTriangle className="w-2.5 h-2.5 flex-shrink-0" />
-                                                            {formatCancellationReason(payment.cancellation_reason)}
-                                                        </span>
                                                     ) : (
                                                         <span className="text-[10px] text-muted-foreground">—</span>
                                                     )}
