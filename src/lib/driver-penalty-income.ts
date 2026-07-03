@@ -72,17 +72,27 @@ export function sumCommissionDeductions(deductions: Deduction[]): number {
         .reduce((sum, d) => sum + Math.abs(d.amount || 0), 0);
 }
 
-/** Signed total of penalty rows (negative debits) for earnings totals. */
-export function sumPenaltyDeductions(
+/** Total penalty amount (positive number) from driver_deductions. */
+export function sumPenaltyAmounts(
     deductions: Pick<Deduction, "type" | "amount">[]
 ): number {
     return deductions
         .filter((d) => d.type === "penalty")
-        .reduce((sum, d) => {
-            const raw = Number(d.amount || 0);
-            const signed = raw < 0 ? raw : -Math.abs(raw);
-            return sum + signed;
-        }, 0);
+        .reduce((sum, d) => sum + Math.abs(Number(d.amount || 0)), 0);
+}
+
+/** Net driver earnings: ride income + rider credits − penalties (commissions excluded). */
+export function computeDriverNetEarnings(
+    baseRideIncome: number,
+    riderCancellationCredits: number,
+    penaltyTotal: number
+): number {
+    return Math.max(0, baseRideIncome + riderCancellationCredits - penaltyTotal);
+}
+
+/** True when an income-history row is a stored driver_deductions penalty debit. */
+export function isPenaltyIncomeEntry(entry: { id?: string }): boolean {
+    return Boolean(entry.id?.startsWith("driver-deduction-"));
 }
 
 /** Ride ids that already have a stored penalty in driver_deductions (skip duplicate credits). */

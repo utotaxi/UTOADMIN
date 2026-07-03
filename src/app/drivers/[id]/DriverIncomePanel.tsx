@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { addDeduction, deleteDeduction } from "./actions";
 import { formatUkDateShort, formatUkTime, UK_REPORT_DATE_FORMATTER } from "@/lib/uk-datetime";
+import { isPenaltyIncomeEntry } from "@/lib/driver-penalty-income";
 
 type Payment = {
     id: string;
@@ -517,31 +518,6 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
         });
     }, [payments, dateFrom, dateTo]);
 
-    // Summary stats for filtered range
-    const filteredStats = useMemo(() => {
-        const succeeded = filteredPayments.filter(p => p.status === "succeeded");
-        const pending = filteredPayments.filter(p => p.status === "pending");
-        const cancellationEntries = filteredPayments.filter(p => p.entry_type === "cancellation");
-        const rideEntries = succeeded.filter(p => p.entry_type !== "cancellation");
-        const cancellationCredits = cancellationEntries
-            .filter(p => (p.amount || 0) > 0)
-            .reduce((s, p) => s + (p.amount || 0), 0);
-        const cancellationDebits = cancellationEntries
-            .filter(p => (p.amount || 0) < 0)
-            .reduce((s, p) => s + (p.amount || 0), 0);
-        return {
-            total: succeeded.reduce((s, p) => s + (p.amount || 0), 0),
-            rideTotal: rideEntries.reduce((s, p) => s + (p.amount || 0), 0),
-            cancellationTotal: cancellationEntries.reduce((s, p) => s + (p.amount || 0), 0),
-            cancellationCredits,
-            cancellationDebits,
-            cancellationCount: cancellationEntries.length,
-            pending: pending.reduce((s, p) => s + (p.amount || 0), 0),
-            count: filteredPayments.length,
-            succeededCount: succeeded.length
-        };
-    }, [filteredPayments]);
-
     const commissions = useMemo(() => deductions.filter(d => d.type === "commission"), [deductions]);
     const penalties = useMemo(() => deductions.filter(d => d.type === "penalty"), [deductions]);
 
@@ -555,12 +531,62 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
     );
     const totalManualDeductions = totalCommissions;
 
-    const grossEarnings = useMemo(() =>
-        payments.filter(p => p.status === "succeeded").reduce((s, p) => s + (p.amount || 0), 0),
+    // Summary stats for filtered range
+    const filteredStats = useMemo(() => {
+        const succeeded = filteredPayments.filter(p => p.status === "succeeded");
+        const pending = filteredPayments.filter(p => p.status === "pending");
+        const cancellationEntries = filteredPayments.filter(p => p.entry_type === "cancellation");
+        const rideEntries = succeeded.filter(p => p.entry_type !== "cancellation");
+        const cancellationCredits = cancellationEntries
+            .filter(p => (p.amount || 0) > 0)
+            .reduce((s, p) => s + (p.amount || 0), 0);
+        const cancellationDebits = cancellationEntries
+            .filter(p => (p.amount || 0) < 0)
+            .reduce((s, p) => s + (p.amount || 0), 0);
+        const penaltyDebitsInFeed = Math.abs(
+            cancellationEntries
+                .filter((p) => isPenaltyIncomeEntry(p))
+                .reduce((s, p) => s + Math.min(0, p.amount || 0), 0)
+        );
+        const grossInRange = succeeded
+            .filter((p) => !isPenaltyIncomeEntry(p))
+            .reduce((s, p) => s + (p.amount || 0), 0);
+        const penaltiesInRange = (dateFrom || dateTo)
+            ? penalties
+                .filter((d) => {
+                    const dDate = UK_REPORT_DATE_FORMATTER.format(new Date(d.created_at));
+                    if (dateFrom && dDate < dateFrom) return false;
+                    if (dateTo && dDate > dateTo) return false;
+                    return true;
+                })
+                .reduce((s, d) => s + Math.abs(d.amount || 0), 0)
+            : totalPenalties;
+        const missingPenaltyDebits = Math.max(0, penaltiesInRange - penaltyDebitsInFeed);
+        return {
+            total: Math.max(0, grossInRange - missingPenaltyDebits),
+            rideTotal: rideEntries.reduce((s, p) => s + (p.amount || 0), 0),
+            cancellationTotal: cancellationEntries.reduce((s, p) => s + (p.amount || 0), 0),
+            cancellationCredits,
+            cancellationDebits: cancellationDebits - missingPenaltyDebits,
+            cancellationCount: cancellationEntries.length,
+            pending: pending.reduce((s, p) => s + (p.amount || 0), 0),
+            count: filteredPayments.length,
+            succeededCount: succeeded.length
+        };
+    }, [filteredPayments, penalties, dateFrom, dateTo, totalPenalties]);
+
+    const rideIncomeGross = useMemo(
+        () =>
+            payments
+                .filter((p) => p.status === "succeeded" && !isPenaltyIncomeEntry(p))
+                .reduce((s, p) => s + (p.amount || 0), 0),
         [payments]
     );
-    // Penalties are already reflected as negative income entries; only subtract commissions here.
-    const effectiveIncome = Math.max(0, grossEarnings - totalManualDeductions);
+    const netEarningsAfterPenalties = useMemo(
+        () => Math.max(0, rideIncomeGross - totalPenalties),
+        [rideIncomeGross, totalPenalties]
+    );
+    const effectiveIncome = Math.max(0, netEarningsAfterPenalties - totalManualDeductions);
 
     const getFileName = useCallback((groupBy: string, ext: string) => {
         const safeName = driverInfo.name.replace(/[^a-zA-Z0-9]/g, "_");
@@ -621,7 +647,7 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                 <div className="px-5 py-3 bg-gradient-to-r from-slate-900 to-slate-800 dark:from-slate-950 dark:to-slate-900 border-b flex items-center justify-between flex-wrap gap-3">
                     <div className="flex items-center gap-2 text-slate-300 text-xs">
                         <TrendingDown className="w-4 h-4 text-rose-400" />
-                        <span>Gross Earnings <span className="font-bold text-white">£{grossEarnings.toFixed(2)}</span></span>
+                        <span>Gross Earnings <span className="font-bold text-white">£{rideIncomeGross.toFixed(2)}</span></span>
                         <span className="text-slate-500">—</span>
                         <span>Commission <span className="font-bold text-rose-400">£{totalManualDeductions.toFixed(2)}</span></span>
                         {totalPenalties > 0 && (
@@ -926,8 +952,8 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                     {/* Summary bar */}
                     <div className="grid grid-cols-3 gap-3">
                         <div className="rounded-lg border bg-slate-50/60 dark:bg-slate-800/40 p-4 flex flex-col gap-1">
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Gross Earnings</span>
-                            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">£{grossEarnings.toFixed(2)}</span>
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Earnings</span>
+                            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">£{netEarningsAfterPenalties.toFixed(2)}</span>
                         </div>
                         <div className="rounded-lg border bg-blue-50/60 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 p-4 flex flex-col gap-1">
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">Total Commission</span>
@@ -935,7 +961,7 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                         </div>
                         <div className="rounded-lg border bg-emerald-50/60 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 p-4 flex flex-col gap-1">
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">After Commission</span>
-                            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">£{Math.max(0, grossEarnings - totalCommissions).toFixed(2)}</span>
+                            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">£{Math.max(0, netEarningsAfterPenalties - totalCommissions).toFixed(2)}</span>
                         </div>
                     </div>
 
@@ -975,7 +1001,7 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                     <div className="grid grid-cols-3 gap-3">
                         <div className="rounded-lg border bg-slate-50/60 dark:bg-slate-800/40 p-4 flex flex-col gap-1">
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Gross Earnings</span>
-                            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">£{grossEarnings.toFixed(2)}</span>
+                            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">£{rideIncomeGross.toFixed(2)}</span>
                         </div>
                         <div className="rounded-lg border bg-rose-50/60 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800 p-4 flex flex-col gap-1">
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-rose-600 dark:text-rose-400">Total Penalties</span>
@@ -983,7 +1009,7 @@ export function DriverIncomePanel({ payments, rideMap, driverInfo, driverId, ded
                         </div>
                         <div className="rounded-lg border bg-emerald-50/60 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 p-4 flex flex-col gap-1">
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">After Penalties</span>
-                            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">£{Math.max(0, grossEarnings - totalPenalties).toFixed(2)}</span>
+                            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">£{netEarningsAfterPenalties.toFixed(2)}</span>
                         </div>
                     </div>
 

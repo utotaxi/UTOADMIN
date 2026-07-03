@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import DriversListClient from "./DriversListClient";
 import { computeCancellationAmount, isCancelledStatus, isRiderCancellationCredit } from "@/lib/cancellation-income";
-import { getPenaltyRideIds, sumPenaltyDeductions } from "@/lib/driver-penalty-income";
+import { getPenaltyRideIds, sumPenaltyAmounts } from "@/lib/driver-penalty-income";
 
 export const dynamic = "force-dynamic";
 
@@ -108,9 +108,9 @@ export default async function DriversPage() {
         });
     }
 
-    // Apply stored cancellation penalties (negative amounts) from driver_deductions.
+    // Apply stored cancellation penalties from driver_deductions.
     Object.entries(deductionsByDriver).forEach(([driverId, driverDeductions]) => {
-        earningsMap[driverId] = (earningsMap[driverId] || 0) + sumPenaltyDeductions(driverDeductions || []);
+        earningsMap[driverId] = (earningsMap[driverId] || 0) - sumPenaltyAmounts(driverDeductions || []);
     });
 
     return (

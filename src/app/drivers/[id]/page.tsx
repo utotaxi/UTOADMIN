@@ -25,6 +25,8 @@ import {
     getPenaltyRideIds,
     mapDriverPenaltyDeductionsToIncome,
     sumCommissionDeductions,
+    sumPenaltyAmounts,
+    computeDriverNetEarnings,
 } from "@/lib/driver-penalty-income";
 import { formatUkDateShort, formatUkTime } from "@/lib/uk-datetime";
 
@@ -168,8 +170,6 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
         new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
     );
 
-    const cancellationFeesTotal = [...cancellationEntries, ...penaltyIncomeEntries].reduce((sum, e) => sum + (e.amount || 0), 0);
-
     // Calculate income from payments table
     const succeededPayments = driverPayments.filter(p => p.status === 'succeeded');
     const pendingPayments = driverPayments.filter(p => p.status === 'pending');
@@ -179,9 +179,8 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
     const pendingIncome = pendingPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
     const failedIncome = failedPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
     const totalCommissionDeductions = sumCommissionDeductions(deductions);
-    const totalPenaltyDeductions = deductions
-        .filter((d) => d.type === "penalty")
-        .reduce((sum, d) => sum + Math.abs(d.amount || 0), 0);
+    const totalPenaltyDeductions = sumPenaltyAmounts(deductions);
+    const riderCancellationCredits = cancellationEntries.reduce((sum, e) => sum + (e.amount || 0), 0);
 
     // Also compute from rides as a fallback / combined total
     const succeededPaymentRideIds = new Set(succeededPayments.map(p => p.ride_id));
@@ -191,10 +190,9 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
     );
     const totalEarningsFromRides = completedPaidRides.reduce((sum, r) => sum + (r.final_price || r.estimated_price || 0), 0);
 
-    // Use the higher of the two (payments table is the source of truth if
-    // available, otherwise use rides) and always add cancellation-fee income.
-    const totalEarnings = (totalEarnedFromPayments > 0 ? totalEarnedFromPayments : totalEarningsFromRides) + cancellationFeesTotal;
-    // Penalties are already included in cancellationFeesTotal; only subtract manual commissions here.
+    const baseRideIncome = totalEarnedFromPayments > 0 ? totalEarnedFromPayments : totalEarningsFromRides;
+    // Penalties come from driver_deductions (source of truth) — not double-counted in the total card.
+    const totalEarnings = computeDriverNetEarnings(baseRideIncome, riderCancellationCredits, totalPenaltyDeductions);
     const effectiveIncome = Math.max(0, totalEarnings - totalCommissionDeductions);
 
     // Build a map of ride_id -> ride details for the payment history (incl. penalty-linked rides).
