@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import DriversListClient from "./DriversListClient";
 import { computeCancellationAmount, isCancelledStatus, isRiderCancellationCredit } from "@/lib/cancellation-income";
+import { getPenaltyRideIds, sumPenaltyDeductions } from "@/lib/driver-penalty-income";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,17 @@ export default async function DriversPage() {
     const { data: allPayments } = await supabaseAdmin
         .from('payments')
         .select('ride_id, amount, status');
+
+    const { data: allDeductions } = await supabaseAdmin
+        .from('driver_deductions')
+        .select('driver_id, amount, type, reason');
+
+    const deductionsByDriver: Record<string, typeof allDeductions> = {};
+    (allDeductions || []).forEach((d) => {
+        if (!d.driver_id) return;
+        if (!deductionsByDriver[d.driver_id]) deductionsByDriver[d.driver_id] = [];
+        deductionsByDriver[d.driver_id]!.push(d);
+    });
 
     const succeededPayments = (allPayments || []).filter(p => p.status === 'succeeded');
 
@@ -77,13 +89,17 @@ export default async function DriversPage() {
             }
         });
 
-        // Rider cancel = +100% credit; driver cancel = −50% fee (matches profile totals).
+        // Rider cancel = +100% credit; driver penalties come from driver_deductions.
         allRides.forEach(r => {
             if (
                 r.driver_id &&
                 isCancelledStatus(r.status) &&
                 !paymentRideIds.has(r.id)
             ) {
+                const driverDeductions = deductionsByDriver[r.driver_id] || [];
+                const rideIdsWithPenalties = getPenaltyRideIds(driverDeductions);
+                if (rideIdsWithPenalties.has(r.id)) return;
+
                 const amount = computeCancellationAmount(r);
                 if (amount > 0 && isRiderCancellationCredit(r.cancellation_reason)) {
                     earningsMap[r.driver_id] = (earningsMap[r.driver_id] || 0) + amount;
@@ -91,6 +107,11 @@ export default async function DriversPage() {
             }
         });
     }
+
+    // Apply stored cancellation penalties (negative amounts) from driver_deductions.
+    Object.entries(deductionsByDriver).forEach(([driverId, driverDeductions]) => {
+        earningsMap[driverId] = (earningsMap[driverId] || 0) + sumPenaltyDeductions(driverDeductions || []);
+    });
 
     return (
         <DriversListClient

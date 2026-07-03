@@ -72,8 +72,23 @@ export function sumCommissionDeductions(deductions: Deduction[]): number {
         .reduce((sum, d) => sum + Math.abs(d.amount || 0), 0);
 }
 
+/** Signed total of penalty rows (negative debits) for earnings totals. */
+export function sumPenaltyDeductions(
+    deductions: Pick<Deduction, "type" | "amount">[]
+): number {
+    return deductions
+        .filter((d) => d.type === "penalty")
+        .reduce((sum, d) => {
+            const raw = Number(d.amount || 0);
+            const signed = raw < 0 ? raw : -Math.abs(raw);
+            return sum + signed;
+        }, 0);
+}
+
 /** Ride ids that already have a stored penalty in driver_deductions (skip duplicate credits). */
-export function getPenaltyRideIds(deductions: Deduction[]): Set<string> {
+export function getPenaltyRideIds(
+    deductions: Pick<Deduction, "type" | "reason">[]
+): Set<string> {
     const ids = deductions
         .filter((d) => d.type === "penalty")
         .map((d) => extractRideIdFromPenaltyReason(d.reason))
