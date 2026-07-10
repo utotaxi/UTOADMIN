@@ -297,7 +297,6 @@ export default async function ScheduledRidesPage() {
             driver_name: activeDriverName,
             declined_driver_name: declinedName || (assignmentStatus === 'declined' ? b.assigned_driver_name : null),
             is_driver_assignment_locked: isDriverAssignmentLocked(rawStatus, assignmentStatus),
-            can_cancel: !['completed', 'cancelled', 'cancelled_no_drivers', 'expired'].includes(rawStatus),
         };
     });
 
