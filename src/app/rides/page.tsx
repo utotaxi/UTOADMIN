@@ -1,5 +1,12 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import RidesClient from "./RidesClient";
+import {
+    buildRiderLookup,
+    resolveLaterLegFare,
+    resolveRiderId,
+    resolveRiderName,
+    resolveWebBookerFare,
+} from "@/lib/scheduled-booking-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -51,21 +58,36 @@ export default async function RidesPage() {
     if (webRes.error) console.error("Error fetching finished web_booker rides:", webRes.error);
 
     const finishedBookings = [
-        ...(laterRes.data || []),
-        ...(webRes.data || []),
+        ...(laterRes.data || []).map((b: any) => ({ ...b, source: 'later' })),
+        ...(webRes.data || []).map((b: any) => ({ ...b, source: 'web_booker' })),
     ];
 
-    // Resolve rider + driver names for the finished bookings.
-    const riderIds = [...new Set(finishedBookings.map((b: any) => b.rider_id || b.user_id).filter(Boolean))];
+    const riderIds = [...new Set(finishedBookings.map((b: any) => resolveRiderId(b)).filter(Boolean))];
+    const riderEmails = [...new Set(finishedBookings
+        .map((b: any) => (typeof b.email === 'string' ? b.email.trim().toLowerCase() : null))
+        .filter(Boolean))];
+    const riderPhones = [...new Set(finishedBookings
+        .map((b: any) => {
+            const raw = b.phone_number || b.phone;
+            if (typeof raw !== 'string') return null;
+            const digits = raw.replace(/\D/g, '');
+            return digits || null;
+        })
+        .filter(Boolean))];
     const driverIds = [...new Set(finishedBookings.map((b: any) => b.driver_id || b.assigned_driver_id || b.assigned_driver).filter(Boolean))];
 
-    const riderMap: Record<string, any> = {};
-    if (riderIds.length > 0) {
+    const riderLookupFilters: string[] = [];
+    if (riderIds.length > 0) riderLookupFilters.push(`id.in.(${riderIds.join(',')})`);
+    if (riderEmails.length > 0) riderLookupFilters.push(`email.in.(${riderEmails.join(',')})`);
+    if (riderPhones.length > 0) riderLookupFilters.push(`phone.in.(${riderPhones.join(',')})`);
+
+    const riderLookup = buildRiderLookup([]);
+    if (riderLookupFilters.length > 0) {
         const { data: riders } = await supabaseAdmin
             .from('users')
             .select('id, full_name, phone, email')
-            .in('id', riderIds);
-        (riders || []).forEach((r: any) => { riderMap[r.id] = r; });
+            .or(riderLookupFilters.join(','));
+        Object.assign(riderLookup, buildRiderLookup(riders || []));
     }
 
     // Pull full driver rows (incl. licence + PHD/PHV + expiry fields) for reports.
@@ -89,11 +111,16 @@ export default async function RidesPage() {
     // Normalize finished scheduled bookings into the RideData shape.
     const normalizedBookings = finishedBookings.map((b: any) => {
         const status = normalizeFinishedStatus(b.status);
-        const rId = b.rider_id || b.user_id;
         const dId = b.driver_id || b.assigned_driver_id || b.assigned_driver;
         const requestedAt = b.created_at || b.pickup_at || b.scheduled_time || null;
         const driverObj = driverMap[dId]
             || (b.assigned_driver_name ? { user: { full_name: b.assigned_driver_name } } : null);
+        const resolvedName = resolveRiderName(b, riderLookup);
+        const riderId = resolveRiderId(b);
+        const finalFare = b.source === 'web_booker'
+            ? resolveWebBookerFare(b)
+            : resolveLaterLegFare(b, 'single');
+        const originalFare = Number(b.estimated_fare ?? b.estimated_price ?? 0);
 
         return {
             ...b,
@@ -104,14 +131,18 @@ export default async function RidesPage() {
             created_at: b.created_at,
             completed_at: status === 'completed' ? (b.completed_at || b.updated_at || b.pickup_at || b.scheduled_time) : b.completed_at,
             cancelled_at: status === 'cancelled' ? (b.cancelled_at || b.updated_at) : b.cancelled_at,
-            estimated_price: Number(b.estimated_fare ?? b.estimated_price ?? b.final_price ?? 0),
-            final_price: b.final_price ?? undefined,
+            estimated_price: originalFare,
+            final_price: finalFare !== originalFare ? finalFare : (b.final_price ?? undefined),
             payment_method: b.payment_method,
             vehicle_type: b.vehicle_type,
             passenger_count: b.passenger_count,
             reference: b.reference,
             cancellation_reason: b.cancellation_reason,
-            rider: riderMap[rId] || null,
+            rider: resolvedName
+                ? { id: riderId, full_name: resolvedName, phone: b.phone_number || b.phone, email: b.email }
+                : (riderId && riderLookup.byId[riderId]
+                    ? { id: riderId, full_name: riderLookup.byId[riderId] }
+                    : null),
             driver: driverObj,
             payments: null,
         };

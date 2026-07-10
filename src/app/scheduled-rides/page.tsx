@@ -15,6 +15,16 @@ import {
 } from "lucide-react";
 import AssignDriverButton from "./AssignDriverButton";
 import { formatUkDateShort, formatUkTime } from "@/lib/uk-datetime";
+import {
+    buildRiderLookup,
+    hasLaterDiscount,
+    resolveLaterLegFare,
+    resolveOriginalLaterFare,
+    resolveRiderId,
+    resolveRiderName,
+    resolveWebBookerFare,
+    toNum,
+} from "@/lib/scheduled-booking-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -57,13 +67,6 @@ function formatAdditionalStop(stops: unknown, stopsText: unknown): string | null
     return null;
 }
 
-// Coerce a value to a finite number, or null.
-function toNum(v: unknown): number | null {
-    if (v === null || v === undefined || v === '') return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-}
-
 // Safe date formatting that won't throw on null / invalid values.
 function fmtDate(value: unknown, pattern: string): string {
     if (!value) return '—';
@@ -73,50 +76,12 @@ function fmtDate(value: unknown, pattern: string): string {
     return formatUkDateShort(d);
 }
 
-function nonEmptyString(value: unknown): string | null {
-    if (typeof value !== 'string') return null;
-    const trimmed = value.trim();
-    return trimmed ? trimmed : null;
-}
-
-function firstNonEmptyString(...values: unknown[]): string | null {
-    for (const value of values) {
-        const cleaned = nonEmptyString(value);
-        if (cleaned) return cleaned;
-    }
-    return null;
-}
-
-function resolveRiderId(booking: any): string | null {
-    const riderId = nonEmptyString(booking.rider_id);
-    if (riderId) return riderId;
-
-    // `later_bookings` may still use `user_id` to store rider ids.
-    if (booking.source === 'later') {
-        return nonEmptyString(booking.user_id);
-    }
-
-    return null;
-}
-
 function resolveDriverId(booking: any): string | null {
-    return firstNonEmptyString(booking.driver_id, booking.assigned_driver_id, booking.assigned_driver);
-}
-
-function resolveRiderName(booking: any, riderMap: Record<string, string>): string | null {
-    const riderId = resolveRiderId(booking);
-    const firstName = nonEmptyString(booking.first_name);
-    const lastName = nonEmptyString(booking.last_name);
-    const fullNameFromParts = [firstName, lastName].filter(Boolean).join(' ').trim();
-
-    return firstNonEmptyString(
-        riderId ? riderMap[riderId] : null,
-        booking.rider_name,
-        booking.passenger_name,
-        booking.customer_name,
-        fullNameFromParts,
-        booking.users?.full_name
-    );
+    const candidates = [booking.driver_id, booking.assigned_driver_id, booking.assigned_driver];
+    for (const value of candidates) {
+        if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return null;
 }
 
 // Expand a booking into display "legs". Round-trip "later" bookings become two
@@ -127,8 +92,9 @@ function expandBookingToLegs(booking: any): any[] {
 
     if (booking.source !== 'later' || !booking.is_round_trip) {
         const fare = booking.source === 'web_booker'
-            ? (toNum(booking.estimated_price) ?? toNum(booking.estimated_fare) ?? toNum(booking.final_price) ?? 0)
-            : (toNum(booking.outbound_fare) ?? toNum(booking.estimated_fare) ?? 0);
+            ? resolveWebBookerFare(booking)
+            : resolveLaterLegFare(booking, 'single');
+        const originalFare = booking.source === 'later' ? resolveOriginalLaterFare(booking, 'single') : null;
         return [{
             ...booking,
             assignBookingId,
@@ -137,19 +103,17 @@ function expandBookingToLegs(booking: any): any[] {
             legLabel: null,
             additional_stop: formatAdditionalStop(booking.stops, booking.stops_text),
             leg_fare: fare,
+            original_fare: originalFare,
+            has_discount: booking.source === 'later' && hasLaterDiscount(booking),
         }];
     }
 
     // Round trip → split the combined fare into the two individual legs.
-    const totalFare = toNum(booking.estimated_fare);
-    const outFare = toNum(booking.outbound_fare);
-    const retFare = toNum(booking.return_fare);
-    const outboundFare = outFare
-        ?? (totalFare != null && retFare != null ? Math.round((totalFare - retFare) * 100) / 100 : totalFare)
-        ?? 0;
-    const returnFare = retFare
-        ?? (totalFare != null && outFare != null ? Math.round((totalFare - outFare) * 100) / 100 : totalFare)
-        ?? 0;
+    const outboundFare = resolveLaterLegFare(booking, 'outbound');
+    const returnFare = resolveLaterLegFare(booking, 'return');
+    const originalOutbound = resolveOriginalLaterFare(booking, 'outbound');
+    const originalReturn = resolveOriginalLaterFare(booking, 'return');
+    const discounted = hasLaterDiscount(booking);
 
     const outbound = {
         ...booking,
@@ -159,6 +123,8 @@ function expandBookingToLegs(booking: any): any[] {
         legLabel: 'Onward',
         additional_stop: formatAdditionalStop(booking.stops, booking.stops_text),
         leg_fare: outboundFare,
+        original_fare: originalOutbound,
+        has_discount: discounted,
     };
 
     const returnAt = booking.return_at || null;
@@ -179,6 +145,8 @@ function expandBookingToLegs(booking: any): any[] {
         pickup_at: returnAt || booking.pickup_at,
         dropoff_by: returnDropoffBy,
         leg_fare: returnFare,
+        original_fare: originalReturn,
+        has_discount: discounted,
     };
 
     return [outbound, ret];
@@ -226,22 +194,37 @@ export default async function ScheduledRidesPage() {
     // Combined feed of both sources.
     const rawBookings = [...normalizedLater, ...normalizedWeb];
 
-    // Collect unique rider_id and driver_id values to look up names
+    // Collect rider/driver ids plus booking contact fields for name lookup.
     const riderIds = [...new Set((rawBookings || [])
         .map((b: any) => resolveRiderId(b))
         .filter((id: string | null): id is string => Boolean(id)))];
+    const riderEmails = [...new Set((rawBookings || [])
+        .map((b: any) => (typeof b.email === 'string' ? b.email.trim().toLowerCase() : null))
+        .filter((email: string | null): email is string => Boolean(email)))];
+    const riderPhones = [...new Set((rawBookings || [])
+        .map((b: any) => {
+            const raw = b.phone_number || b.phone;
+            if (typeof raw !== 'string') return null;
+            const digits = raw.replace(/\D/g, '');
+            return digits || null;
+        })
+        .filter((phone: string | null): phone is string => Boolean(phone)))];
     const driverIds = [...new Set((rawBookings || [])
         .map((b: any) => resolveDriverId(b))
         .filter((id: string | null): id is string => Boolean(id)))];
 
-    // Fetch rider details from users table
-    const riderMap: Record<string, string> = {};
-    if (riderIds.length > 0) {
+    const riderLookupFilters: string[] = [];
+    if (riderIds.length > 0) riderLookupFilters.push(`id.in.(${riderIds.join(',')})`);
+    if (riderEmails.length > 0) riderLookupFilters.push(`email.in.(${riderEmails.join(',')})`);
+    if (riderPhones.length > 0) riderLookupFilters.push(`phone.in.(${riderPhones.join(',')})`);
+
+    const riderLookup = buildRiderLookup([]);
+    if (riderLookupFilters.length > 0) {
         const { data: riders } = await supabaseAdmin
             .from('users')
-            .select('id, full_name')
-            .in('id', riderIds);
-        (riders || []).forEach((r: any) => { riderMap[r.id] = r.full_name; });
+            .select('id, full_name, email, phone')
+            .or(riderLookupFilters.join(','));
+        Object.assign(riderLookup, buildRiderLookup(riders || []));
     }
 
     // Fetch driver details from drivers table (joined with user) AND users table directly
@@ -289,7 +272,7 @@ export default async function ScheduledRidesPage() {
         const dId = resolveDriverId(b);
         return {
             ...b,
-            rider_name: resolveRiderName(b, riderMap),
+            rider_name: resolveRiderName(b, riderLookup),
             driver_name: (dId ? driverMap[dId] : null) || b.assigned_driver_name || null,
             is_driver_assignment_locked: isDriverAssignmentLocked(b.status),
         };
@@ -545,7 +528,16 @@ export default async function ScheduledRidesPage() {
                                                     )}
                                                 </td>
                                                 <td className="px-6 py-4 font-bold text-emerald-600 dark:text-emerald-400">
-                                                    £{Number(booking.leg_fare || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    <div className="flex flex-col">
+                                                        <span>
+                                                            £{Number(booking.leg_fare || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                        </span>
+                                                        {booking.has_discount && booking.original_fare != null && booking.original_fare > booking.leg_fare && (
+                                                            <span className="text-[10px] font-medium text-muted-foreground line-through">
+                                                                £{Number(booking.original_fare).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     {booking.source === 'web_booker' ? (
