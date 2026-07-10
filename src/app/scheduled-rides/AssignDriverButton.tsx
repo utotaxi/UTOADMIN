@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { fetchAllDrivers, manualAssignDriverToScheduled } from './actions';
-import { UserPlus, ChevronDown, CheckCircle2, Search, Loader2, Car, X, RefreshCw } from 'lucide-react';
+import { CheckCircle2, Search, Loader2, Car, X, RefreshCw } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 interface Driver {
@@ -61,9 +61,7 @@ export default function AssignDriverButton({
   const assignmentLocked = lockAssignment;
   const responseStatus = (assignmentStatus || '').toLowerCase();
   const isDeclined = responseStatus === 'declined' || status === 'declined';
-  const hasDeclineHistory = Boolean(declinedDriverName) || isDeclined;
-  const shownDeclinedName = declinedDriverName || (isDeclined ? currentDriverName : null);
-  const useReassignLabel = hasDeclineHistory;
+  const shownDeclinedName = declinedDriverName || currentDriverName;
 
   useEffect(() => {
     setAssigned(currentDriverName);
@@ -142,7 +140,7 @@ export default function AssignDriverButton({
     <div className="absolute z-[9999] top-full left-0 mt-2 w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl rounded-xl overflow-hidden">
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
         <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
-          {useReassignLabel ? 'Reassign Driver' : 'Select Driver'}
+          {isDeclined ? 'Re-assign Driver' : 'Select Driver'}
         </span>
         <button
           onClick={() => { setOpen(false); setSearch(''); }}
@@ -239,41 +237,37 @@ export default function AssignDriverButton({
 
   return (
     <div className={`relative ${open ? 'z-50' : 'z-10'}`} ref={wrapperRef}>
-      {hasDeclineHistory && !assigned ? (
+      {isDeclined || (!assigned && shownDeclinedName) ? (
         <div className="flex flex-col gap-1.5 items-start max-w-[180px]">
           <div className="rounded-md border border-rose-200 dark:border-rose-800 bg-rose-50/80 dark:bg-rose-950/30 px-2 py-1.5 w-full">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">
+            <p className="text-[9px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">
               Last driver declined
             </p>
-            {shownDeclinedName ? (
-              <p className="text-[11px] font-semibold text-rose-800 dark:text-rose-200 truncate" title={shownDeclinedName}>
-                {shownDeclinedName}
-              </p>
-            ) : (
-              <p className="text-[11px] text-rose-700/80 dark:text-rose-300/80">Previous assignee declined</p>
-            )}
+            <p className="text-[11px] font-semibold text-rose-800 dark:text-rose-200 truncate" title={shownDeclinedName || 'Unknown driver'}>
+              {shownDeclinedName || 'Unknown driver'}
+            </p>
           </div>
-          <button
-            onClick={handleOpen}
-            disabled={assigning}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-all disabled:opacity-50 cursor-pointer shadow-sm"
-          >
-            {assigning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-            {assigning ? 'Reassigning…' : 'Reassign'}
-          </button>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
+              Declined
+            </span>
+            <button
+              onClick={handleOpen}
+              disabled={assigning}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors disabled:opacity-50"
+            >
+              {assigning ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              {assigning ? 'Assigning…' : 'Re-assign'}
+            </button>
+          </div>
           {dropdown}
         </div>
       ) : assigned ? (
-        <div className="flex flex-col gap-1.5 items-start">
-          {hasDeclineHistory && shownDeclinedName && (
-            <div className="rounded-md border border-rose-200 dark:border-rose-800 bg-rose-50/80 dark:bg-rose-950/30 px-2 py-1 w-full max-w-[180px]">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">
-                Previously declined by
-              </p>
-              <p className="text-[10px] font-semibold text-rose-800 dark:text-rose-200 truncate" title={shownDeclinedName}>
-                {shownDeclinedName}
-              </p>
-            </div>
+        <div className="flex flex-col gap-1 items-start">
+          {shownDeclinedName && responseStatus === 'pending' && (
+            <p className="text-[9px] text-rose-600 dark:text-rose-400 truncate max-w-[160px]" title={`Previously declined by ${shownDeclinedName}`}>
+              Prev. declined: {shownDeclinedName}
+            </p>
           )}
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1.5 min-w-0">
@@ -287,20 +281,6 @@ export default function AssignDriverButton({
               >
                 Accepted
               </span>
-            ) : isDeclined ? (
-              <>
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
-                  Declined
-                </span>
-                <button
-                  onClick={handleOpen}
-                  disabled={assigning}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors disabled:opacity-50"
-                >
-                  {assigning ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                  {assigning ? 'Reassigning…' : 'Reassign'}
-                </button>
-              </>
             ) : (
               <>
                 {(responseStatus === 'pending' || status === 'driver_assigned') && (
@@ -313,8 +293,8 @@ export default function AssignDriverButton({
                   disabled={assigning}
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600 hover:text-slate-700 dark:hover:text-slate-200 transition-colors disabled:opacity-40 cursor-pointer border border-slate-200 dark:border-slate-600"
                 >
-                  <ChevronDown className="w-2.5 h-2.5" />
-                  Change
+                  <RefreshCw className="w-2.5 h-2.5" />
+                  Re-assign
                 </button>
               </>
             )}
@@ -331,12 +311,10 @@ export default function AssignDriverButton({
           >
             {assigning ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : useReassignLabel ? (
-              <RefreshCw className="w-3.5 h-3.5" />
             ) : (
-              <UserPlus className="w-3.5 h-3.5" />
+              <RefreshCw className="w-3.5 h-3.5" />
             )}
-            {assigning ? (useReassignLabel ? 'Reassigning…' : 'Assigning…') : assignmentLocked ? 'Locked' : useReassignLabel ? 'Reassign' : 'Assign Driver'}
+            {assigning ? 'Assigning…' : assignmentLocked ? 'Locked' : 'Re-assign'}
           </button>
           {dropdown}
         </>

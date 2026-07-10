@@ -279,20 +279,12 @@ export default async function ScheduledRidesPage() {
         let displayStatus = b.status;
         if (assignmentStatus === 'declined' || rawStatus === 'marketplace') {
             displayStatus = 'declined';
-        } else if (
-            !b.driver_id &&
-            b.last_declined_driver_name &&
-            !['driver_accepted', 'accepted', 'arrived', 'started', 'in_progress', 'completed'].includes(rawStatus)
-        ) {
-            displayStatus = 'declined';
         } else if (assignmentStatus === 'pending' && (b.driver_id || b.assigned_driver_name)) {
             // Admin-assigned but not yet accepted
             displayStatus = 'driver_assigned';
         }
 
-        const declinedName = b.last_declined_driver_name
-            || (assignmentStatus === 'declined' ? b.assigned_driver_name : null)
-            || null;
+        const declinedName = b.last_declined_driver_name || null;
         const activeDriverName = assignmentStatus === 'declined'
             ? null
             : (b.assigned_driver_name || (dId ? driverMap[dId] : null) || null);
@@ -303,8 +295,9 @@ export default async function ScheduledRidesPage() {
             assignment_status: assignmentStatus || b.assignment_status,
             rider_name: resolveRiderName(b, riderLookup),
             driver_name: activeDriverName,
-            declined_driver_name: declinedName,
+            declined_driver_name: declinedName || (assignmentStatus === 'declined' ? b.assigned_driver_name : null),
             is_driver_assignment_locked: isDriverAssignmentLocked(rawStatus, assignmentStatus),
+            can_cancel: !['completed', 'cancelled', 'cancelled_no_drivers', 'expired'].includes(rawStatus),
         };
     });
 
@@ -343,7 +336,7 @@ export default async function ScheduledRidesPage() {
             case 'declined':
                 return (
                     <span className="inline-flex items-center gap-1.5 bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 px-2.5 py-1 rounded-full text-xs font-semibold">
-                        <XCircle className="w-3 h-3" /> Driver Declined
+                        <XCircle className="w-3 h-3" /> Declined
                     </span>
                 );
             case 'marketplace':
@@ -574,7 +567,7 @@ export default async function ScheduledRidesPage() {
                                                 <td className="px-6 py-4 font-bold text-emerald-600 dark:text-emerald-400">
                                                     £{Number(booking.leg_fare || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                 </td>
-                                                <td className="px-6 py-4">
+                <td className="px-6 py-4">
                                                     {booking.source === 'web_booker' ? (
                                                         <Link
                                                             href={`/web-booker/dashboard/${booking.assignBookingId}`}
