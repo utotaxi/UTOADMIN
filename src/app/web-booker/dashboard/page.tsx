@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowLeft, Store, Car, Radio, Search } from 'lucide-react';
 import Link from 'next/link';
 import { supabaseAdmin } from "@/lib/supabase";
+import { firstNonEmptyString, nonEmptyString } from "@/lib/scheduled-booking-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,7 @@ function getStatusConfig(status: string) {
                 icon: <Car className="w-3 h-3" />,
             };
         case 'driver_assigned':
+        case 'assigned':
             return { 
                 label: 'DRIVER ASSIGNED', 
                 classes: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
@@ -53,20 +55,71 @@ function getStatusConfig(status: string) {
     }
 }
 
+function passengerNameFromLater(later: any): string | null {
+    return firstNonEmptyString(
+        later?.name,
+        [nonEmptyString(later?.first_name), nonEmptyString(later?.last_name)].filter(Boolean).join(' '),
+    );
+}
+
+function passengerNameFromNote(note?: string | null): string | null {
+    if (!note) return null;
+    const match = note.match(/^\s*Passenger:\s*(.+)$/im);
+    return nonEmptyString(match?.[1] || null);
+}
+
 export default async function WebBookerDashboardPage() {
     const { data: bookings } = await supabaseAdmin
         .from('web_booker')
         .select(`*, users:rider_id(full_name, email, phone)`)
         .order('created_at', { ascending: false });
 
-    // Count stats
-    const totalBookings = bookings?.length || 0;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const marketplaceCount = bookings?.filter((b: any) => b.status === 'marketplace').length || 0;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const assignedCount = bookings?.filter((b: any) => b.status === 'driver_assigned').length || 0;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const searchingCount = bookings?.filter((b: any) => b.status === 'searching_driver').length || 0;
+    const laterIds = [...new Set(
+        (bookings || [])
+            .map((b: any) => b.later_booking_id)
+            .filter(Boolean)
+    )];
+
+    const laterById: Record<string, any> = {};
+    if (laterIds.length > 0) {
+        const { data: laterRows } = await supabaseAdmin
+            .from('later_bookings')
+            .select('id, name, first_name, last_name, email, phone_number, driver_id, assigned_driver_name, assignment_status, status')
+            .in('id', laterIds);
+        (laterRows || []).forEach((row: any) => {
+            laterById[row.id] = row;
+        });
+    }
+
+    // Enrich app-scheduled mirrors with the real passenger + driver from later_bookings.
+    const enrichedBookings = (bookings || []).map((booking: any) => {
+        const later = booking.later_booking_id ? laterById[booking.later_booking_id] : null;
+        const passengerName =
+            passengerNameFromLater(later) ||
+            passengerNameFromNote(booking.booking_note) ||
+            booking.users?.full_name ||
+            'Anonymous User';
+
+        return {
+            ...booking,
+            passenger_name: passengerName,
+            assigned_driver_name:
+                booking.assigned_driver_name ||
+                later?.assigned_driver_name ||
+                null,
+            display_status:
+                later?.assignment_status === 'pending' && (later?.driver_id || later?.assigned_driver_name)
+                    ? 'driver_assigned'
+                    : booking.status,
+        };
+    });
+
+    const totalBookings = enrichedBookings.length;
+    const marketplaceCount = enrichedBookings.filter((b: any) => b.status === 'marketplace').length;
+    const assignedCount = enrichedBookings.filter((b: any) =>
+        b.display_status === 'driver_assigned' || b.status === 'driver_assigned' || b.status === 'assigned'
+    ).length;
+    const searchingCount = enrichedBookings.filter((b: any) => b.status === 'searching_driver').length;
 
     return (
         <div className="flex flex-col gap-6 w-full h-[calc(100vh-140px)]">
@@ -80,7 +133,6 @@ export default async function WebBookerDashboardPage() {
                 <p className="text-muted-foreground text-sm ml-[52px]">Track and manage all bookings created via the Web Booker portal.</p>
             </div>
 
-            {/* Dispatch Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 ml-[52px]">
                 <div className="flex items-center gap-3 bg-white dark:bg-card border rounded-lg px-4 py-3 shadow-sm">
                     <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600">
@@ -136,8 +188,8 @@ export default async function WebBookerDashboardPage() {
                             </tr>
                         </thead>
                         <tbody className="divide-y relative z-0">
-                            {bookings && bookings.length > 0 ? bookings.map((booking: any) => {
-                                const statusConfig = getStatusConfig(booking.status);
+                            {enrichedBookings.length > 0 ? enrichedBookings.map((booking: any) => {
+                                const statusConfig = getStatusConfig(booking.display_status || booking.status);
                                 return (
                                     <tr key={booking.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                                         <td className="p-4 font-black text-slate-800 dark:text-slate-200 tracking-wider">
@@ -170,7 +222,7 @@ export default async function WebBookerDashboardPage() {
                                         </td>
                                         <td className="p-4">
                                             <div className="flex flex-col">
-                                                <span className="font-semibold text-slate-800 dark:text-slate-200">{booking.users?.full_name || 'Anonymous User'}</span>
+                                                <span className="font-semibold text-slate-800 dark:text-slate-200">{booking.passenger_name}</span>
                                                 <span className="text-[10px] text-[#0ea5e9] font-bold uppercase tracking-wider mt-0.5">{booking.vehicle_type}</span>
                                             </div>
                                         </td>
