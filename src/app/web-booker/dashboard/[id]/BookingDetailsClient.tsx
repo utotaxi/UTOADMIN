@@ -315,6 +315,11 @@ export default function BookingDetailsClient({ booking }: { booking: any; driver
                                         </div>
                                         <div className="flex flex-col">
                                             <span className="text-sm font-bold text-emerald-800 dark:text-emerald-300">{booking.assigned_driver_name}</span>
+                                            {booking.assignment_status && (
+                                                <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                                                    {String(booking.assignment_status).replace(/_/g, ' ')}
+                                                </span>
+                                            )}
                                             {booking.assigned_driver_distance_km && (
                                                 <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">{booking.assigned_driver_distance_km} miles away</span>
                                             )}
@@ -427,19 +432,25 @@ export default function BookingDetailsClient({ booking }: { booking: any; driver
                             <h3 className="font-semibold text-lg mb-4 pb-2 border-b flex items-center gap-2">
                                 <UserIcon className="w-5 h-5 text-primary" /> Passenger Information
                             </h3>
-                            {booking.users ? (
+                            {(booking.users || booking.passenger_name || booking.passenger_email || booking.passenger_phone) ? (
                                 <div className="grid sm:grid-cols-2 gap-4">
                                     <div className="flex flex-col gap-1">
                                         <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Name</span>
-                                        <span className="font-medium">{booking.users.full_name || 'Not provided'}</span>
+                                        <span className="font-medium">
+                                            {booking.passenger_name || booking.users?.full_name || 'Not provided'}
+                                        </span>
                                     </div>
                                     <div className="flex flex-col gap-1">
                                         <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Email</span>
-                                        <span className="font-medium">{booking.users.email || 'Not provided'}</span>
+                                        <span className="font-medium">
+                                            {booking.passenger_email || booking.users?.email || 'Not provided'}
+                                        </span>
                                     </div>
                                     <div className="flex flex-col gap-1">
                                         <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Phone</span>
-                                        <span className="font-medium">{booking.users.phone || 'Not provided'}</span>
+                                        <span className="font-medium">
+                                            {booking.passenger_phone || booking.users?.phone || 'Not provided'}
+                                        </span>
                                     </div>
                                 </div>
                             ) : (

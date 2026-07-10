@@ -261,8 +261,16 @@ export default async function ScheduledRidesPage() {
     // Enrich bookings with rider/driver names
     const bookings = (rawBookings || []).map((b: any) => {
         const dId = resolveDriverId(b);
+        const assignmentStatus = (b.assignment_status || '').toLowerCase();
+        // Admin-assigned but not yet accepted: show as driver_assigned even though
+        // later_bookings.status must stay "scheduled" (DB check constraint).
+        const displayStatus =
+            assignmentStatus === 'pending' && (b.driver_id || b.assigned_driver_name)
+                ? 'driver_assigned'
+                : b.status;
         return {
             ...b,
+            status: displayStatus,
             rider_name: resolveRiderName(b, riderLookup),
             driver_name: b.assigned_driver_name || (dId ? driverMap[dId] : null) || null,
             is_driver_assignment_locked: isDriverAssignmentLocked(b.status, b.assignment_status),

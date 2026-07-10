@@ -136,7 +136,7 @@ export async function manualAssignDriverToScheduled(
             assigned_at: new Date().toISOString(),
             assignment_responded_at: null,
             assignment_note: `Manually assigned to ${driverName} by admin.`,
-            status: 'driver_assigned',
+            status: 'scheduled',
           })
           .eq('id', existingBooking.later_booking_id);
       }
@@ -168,6 +168,13 @@ export async function manualAssignDriverToScheduled(
       }
 
       const assignedAt = new Date().toISOString();
+      // later_bookings_status_check only allows values like scheduled / driver_accepted /
+      // cancelled — NOT driver_assigned. Keep status as scheduled (or current) and track
+      // the admin assign via assignment_status = pending until the driver accepts.
+      const nextStatus = hasLockedAssignmentStatus(existingBooking.status)
+        ? existingBooking.status
+        : (existingBooking.status === 'cancelled' ? 'scheduled' : (existingBooking.status || 'scheduled'));
+
       const { error } = await supabaseAdmin
         .from('later_bookings')
         .update({
@@ -177,7 +184,7 @@ export async function manualAssignDriverToScheduled(
           assigned_at: assignedAt,
           assignment_responded_at: null,
           assignment_note: `Manually assigned to ${driverName} by admin.`,
-          status: 'driver_assigned',
+          status: nextStatus === 'driver_assigned' ? 'scheduled' : nextStatus,
         })
         .eq('id', bookingId);
 
@@ -189,11 +196,28 @@ export async function manualAssignDriverToScheduled(
             .from('later_bookings')
             .update({
               driver_id: driverId,
-              status: 'driver_assigned',
+              status: 'scheduled',
             })
             .eq('id', bookingId);
           if (legacyError) {
             return { success: false, error: `${error.message}. Also run sql/later_bookings_assignment_columns.sql in Supabase.` };
+          }
+        } else if (/later_bookings_status_check/i.test(error.message || '')) {
+          // Retry without an invalid status value.
+          const { error: retryError } = await supabaseAdmin
+            .from('later_bookings')
+            .update({
+              driver_id: driverId,
+              assigned_driver_name: driverName,
+              assignment_status: 'pending',
+              assigned_at: assignedAt,
+              assignment_responded_at: null,
+              assignment_note: `Manually assigned to ${driverName} by admin.`,
+              status: 'scheduled',
+            })
+            .eq('id', bookingId);
+          if (retryError) {
+            return { success: false, error: retryError.message };
           }
         } else {
           return { success: false, error: error.message };
@@ -267,6 +291,36 @@ export async function ensureLaterBookingInWebBooker(laterBookingId: string) {
       .maybeSingle();
 
     if (existingMirror?.id) {
+      // Refresh passenger/fare snapshot from later_bookings so Review shows correct details.
+      const { data: laterRefresh } = await supabaseAdmin
+        .from('later_bookings')
+        .select('*')
+        .eq('id', laterBookingId)
+        .maybeSingle();
+      if (laterRefresh) {
+        const riderName = [laterRefresh.first_name, laterRefresh.last_name].filter(Boolean).join(' ').trim()
+          || laterRefresh.name
+          || null;
+        await supabaseAdmin
+          .from('web_booker')
+          .update({
+            estimated_price: resolveLaterLegFare(laterRefresh, 'single'),
+            scheduled_time: laterRefresh.pickup_at || null,
+            pickup_address: laterRefresh.pickup_address,
+            dropoff_address: laterRefresh.dropoff_address,
+            assigned_driver_id: laterRefresh.driver_id || null,
+            assigned_driver_name: laterRefresh.assigned_driver_name || null,
+            dispatch_note: laterRefresh.assignment_note
+              || (riderName ? `Synced from app scheduled ride (${riderName}).` : 'Synced from app scheduled ride.'),
+            booking_note: [
+              riderName ? `Passenger: ${riderName}` : null,
+              laterRefresh.email ? `Email: ${laterRefresh.email}` : null,
+              laterRefresh.phone_number ? `Phone: ${laterRefresh.phone_number}` : null,
+              laterRefresh.flight_number ? `Flight: ${laterRefresh.flight_number}` : null,
+            ].filter(Boolean).join('\n') || 'Opened from Scheduled Rides for admin review.',
+          })
+          .eq('id', existingMirror.id);
+      }
       return { success: true, webBookerId: existingMirror.id };
     }
 
@@ -306,9 +360,12 @@ export async function ensureLaterBookingInWebBooker(laterBookingId: string) {
       dispatch_mode: later.driver_id ? 'manual' : 'marketplace',
       dispatch_note: later.assignment_note
         || (riderName ? `Synced from app scheduled ride (${riderName}).` : 'Synced from app scheduled ride.'),
-      booking_note: later.flight_number
-        ? `Flight: ${later.flight_number}`
-        : 'Opened from Scheduled Rides for admin review.',
+      booking_note: [
+        riderName ? `Passenger: ${riderName}` : null,
+        later.email ? `Email: ${later.email}` : null,
+        later.phone_number ? `Phone: ${later.phone_number}` : null,
+        later.flight_number ? `Flight: ${later.flight_number}` : null,
+      ].filter(Boolean).join('\n') || 'Opened from Scheduled Rides for admin review.',
     };
 
     const { data: created, error: createError } = await supabaseAdmin
