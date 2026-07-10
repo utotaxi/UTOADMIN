@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import AssignDriverButton from "./AssignDriverButton";
 import EditLaterBookingButton from "./EditLaterBookingButton";
+import CancelScheduledRideButton from "./CancelScheduledRideButton";
 import { formatUkDateShort, formatUkTime } from "@/lib/uk-datetime";
 import {
     buildRiderLookup,
@@ -24,6 +25,7 @@ import {
     resolveWebBookerFare,
     toNum,
 } from "@/lib/scheduled-booking-utils";
+import { syncDeclinedLaterAssignments } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -182,8 +184,19 @@ export default async function ScheduledRidesPage() {
 
     const normalizedLater = (laterBookings || []).map((b: any) => ({ ...b, source: 'later' }));
 
+    // If the driver app returned a ride to marketplace after decline, normalize
+    // assignment_status to "declined" so admin can re-assign / cancel.
+    await syncDeclinedLaterAssignments(normalizedLater);
+
+    // Re-fetch later bookings after sync so UI sees declined status immediately.
+    const { data: laterBookingsFresh } = await supabaseAdmin
+        .from('later_bookings')
+        .select('*')
+        .order('pickup_at', { ascending: true });
+    const normalizedLaterFresh = (laterBookingsFresh || laterBookings || []).map((b: any) => ({ ...b, source: 'later' }));
+
     // Combined feed of both sources.
-    const rawBookings = [...normalizedLater, ...normalizedWeb];
+    const rawBookings = [...normalizedLaterFresh, ...normalizedWeb];
 
     // Collect rider/driver ids plus booking contact fields for name lookup.
     const riderIds = [...new Set((rawBookings || [])
@@ -262,18 +275,30 @@ export default async function ScheduledRidesPage() {
     const bookings = (rawBookings || []).map((b: any) => {
         const dId = resolveDriverId(b);
         const assignmentStatus = (b.assignment_status || '').toLowerCase();
-        // Admin-assigned but not yet accepted: show as driver_assigned even though
-        // later_bookings.status must stay "scheduled" (DB check constraint).
-        const displayStatus =
-            assignmentStatus === 'pending' && (b.driver_id || b.assigned_driver_name)
-                ? 'driver_assigned'
-                : b.status;
+        const rawStatus = (b.status || '').toLowerCase();
+
+        let displayStatus = b.status;
+        if (assignmentStatus === 'declined' || rawStatus === 'marketplace') {
+            displayStatus = 'declined';
+        } else if (assignmentStatus === 'pending' && (b.driver_id || b.assigned_driver_name)) {
+            // Admin-assigned but not yet accepted
+            displayStatus = 'driver_assigned';
+        }
+
+        const declinedName = b.last_declined_driver_name || null;
+        const activeDriverName = assignmentStatus === 'declined'
+            ? null
+            : (b.assigned_driver_name || (dId ? driverMap[dId] : null) || null);
+
         return {
             ...b,
             status: displayStatus,
+            assignment_status: assignmentStatus || b.assignment_status,
             rider_name: resolveRiderName(b, riderLookup),
-            driver_name: b.assigned_driver_name || (dId ? driverMap[dId] : null) || null,
-            is_driver_assignment_locked: isDriverAssignmentLocked(b.status, b.assignment_status),
+            driver_name: activeDriverName,
+            declined_driver_name: declinedName || (assignmentStatus === 'declined' ? b.assigned_driver_name : null),
+            is_driver_assignment_locked: isDriverAssignmentLocked(rawStatus, assignmentStatus),
+            can_cancel: !['completed', 'cancelled', 'cancelled_no_drivers', 'expired'].includes(rawStatus),
         };
     });
 
@@ -307,6 +332,18 @@ export default async function ScheduledRidesPage() {
                 return (
                     <span className="inline-flex items-center gap-1.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 px-2.5 py-1 rounded-full text-xs font-semibold">
                         <CheckCircle2 className="w-3 h-3" /> Driver Assigned
+                    </span>
+                );
+            case 'declined':
+                return (
+                    <span className="inline-flex items-center gap-1.5 bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 px-2.5 py-1 rounded-full text-xs font-semibold">
+                        <XCircle className="w-3 h-3" /> Declined
+                    </span>
+                );
+            case 'marketplace':
+                return (
+                    <span className="inline-flex items-center gap-1.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-2.5 py-1 rounded-full text-xs font-semibold">
+                        <CalendarClock className="w-3 h-3" /> Marketplace
                     </span>
                 );
             case 'driver_accepted':
@@ -484,6 +521,7 @@ export default async function ScheduledRidesPage() {
                                                     <AssignDriverButton
                                                         bookingId={booking.assignBookingId}
                                                         currentDriverName={booking.driver_name}
+                                                        declinedDriverName={booking.declined_driver_name}
                                                         source={booking.source}
                                                         status={booking.status}
                                                         assignmentStatus={booking.assignment_status}
@@ -531,16 +569,24 @@ export default async function ScheduledRidesPage() {
                                                     £{Number(booking.leg_fare || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                 </td>
                                                 <td className="px-6 py-4">
-                                                    {booking.source === 'web_booker' ? (
-                                                        <Link
-                                                            href={`/web-booker/dashboard/${booking.assignBookingId}`}
-                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                                                        >
-                                                            <Pencil className="w-3.5 h-3.5" /> Edit details
-                                                        </Link>
-                                                    ) : (
-                                                        <EditLaterBookingButton bookingId={booking.assignBookingId} />
-                                                    )}
+                                                    <div className="flex flex-col gap-1.5 items-start">
+                                                        {booking.source === 'web_booker' ? (
+                                                            <Link
+                                                                href={`/web-booker/dashboard/${booking.assignBookingId}`}
+                                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                                                            >
+                                                                <Pencil className="w-3.5 h-3.5" /> Edit details
+                                                            </Link>
+                                                        ) : (
+                                                            <EditLaterBookingButton bookingId={booking.assignBookingId} />
+                                                        )}
+                                                        {booking.can_cancel && !booking.is_driver_assignment_locked && (
+                                                            <CancelScheduledRideButton
+                                                                bookingId={booking.assignBookingId}
+                                                                source={booking.source}
+                                                            />
+                                                        )}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         );

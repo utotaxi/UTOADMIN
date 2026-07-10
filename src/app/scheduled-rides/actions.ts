@@ -17,6 +17,206 @@ function hasLockedAssignmentStatus(status?: string | null): boolean {
   return LOCKED_ASSIGNMENT_STATUSES.has((status || '').toLowerCase());
 }
 
+async function logAssignmentEvent(params: {
+  laterBookingId: string;
+  eventType: 'assigned' | 'accepted' | 'declined' | 'reassigned' | 'cancelled' | 'marketplace';
+  driverId?: string | null;
+  driverName?: string | null;
+  note?: string | null;
+}) {
+  try {
+    await supabaseAdmin.from('later_booking_assignment_events').insert({
+      later_booking_id: params.laterBookingId,
+      event_type: params.eventType,
+      driver_id: params.driverId || null,
+      driver_name: params.driverName || null,
+      note: params.note || null,
+    });
+  } catch (err) {
+    console.warn('[AssignmentEvent] Failed to log event (table may be missing):', err);
+  }
+}
+
+/**
+ * Normalize marketplace / cleared-driver rows that were previously pending
+ * into assignment_status = declined so the admin UI can re-assign.
+ */
+export async function syncDeclinedLaterAssignments(bookings: any[]) {
+  const now = new Date().toISOString();
+  const candidates = (bookings || []).filter((b) => {
+    if (b.source && b.source !== 'later') return false;
+    const assignmentStatus = (b.assignment_status || '').toLowerCase();
+    const status = (b.status || '').toLowerCase();
+    const hadDriver = Boolean(b.assigned_driver_name || b.driver_id || b.last_declined_driver_name);
+    if (!hadDriver) return false;
+    if (assignmentStatus === 'declined') return false;
+    if (assignmentStatus === 'accepted') return false;
+    // Driver declined → app often clears driver and puts ride in marketplace/scheduled.
+    if (status === 'marketplace') return true;
+    if (!b.driver_id && assignmentStatus === 'pending' && b.assigned_driver_name) return true;
+    return false;
+  });
+
+  await Promise.all(candidates.map(async (b) => {
+    const declinedName = b.assigned_driver_name || b.last_declined_driver_name || null;
+    const declinedId = b.driver_id || b.last_declined_driver_id || null;
+    const { error } = await supabaseAdmin
+      .from('later_bookings')
+      .update({
+        assignment_status: 'declined',
+        last_declined_driver_id: declinedId,
+        last_declined_driver_name: declinedName,
+        declined_at: now,
+        assignment_responded_at: now,
+        driver_id: null,
+        assigned_driver_name: null,
+        assignment_note: declinedName
+          ? `Driver ${declinedName} declined; ride returned to marketplace.`
+          : 'Driver declined; ride returned to marketplace.',
+        status: statusAllowedScheduled(b.status),
+      })
+      .eq('id', b.id);
+
+    if (!error) {
+      await logAssignmentEvent({
+        laterBookingId: b.id,
+        eventType: 'declined',
+        driverId: declinedId,
+        driverName: declinedName,
+        note: 'Synced from marketplace / cleared assignment in admin panel',
+      });
+    }
+  }));
+}
+
+function statusAllowedScheduled(current?: string | null): string {
+  const s = (current || '').toLowerCase();
+  // Keep cancelled as-is; otherwise return to scheduled after decline sync.
+  if (s === 'cancelled' || s === 'cancelled_no_drivers') return 'cancelled';
+  return 'scheduled';
+}
+
+/**
+ * Cancel a scheduled later_booking (or linked web_booker) from the admin panel.
+ */
+export async function cancelScheduledRideAction(
+  bookingId: string,
+  source: 'later' | 'web_booker' = 'later',
+  reason?: string
+) {
+  try {
+    const note = reason?.trim() || 'Cancelled by admin from Scheduled Rides.';
+
+    if (source === 'web_booker') {
+      const { data: existing, error: existingError } = await supabaseAdmin
+        .from('web_booker')
+        .select('id, status, later_booking_id, assigned_driver_id, assigned_driver_name')
+        .eq('id', bookingId)
+        .maybeSingle();
+
+      if (existingError || !existing) {
+        return { success: false, error: existingError?.message || 'Booking not found.' };
+      }
+      if (existing.status === 'completed') {
+        return { success: false, error: 'Completed bookings cannot be cancelled.' };
+      }
+      if (existing.status === 'cancelled') {
+        return { success: true, alreadyCancelled: true };
+      }
+
+      const { error } = await supabaseAdmin
+        .from('web_booker')
+        .update({
+          status: 'cancelled',
+          assigned_driver_id: null,
+          assigned_driver_name: null,
+          dispatch_note: note,
+        })
+        .eq('id', bookingId);
+
+      if (error) return { success: false, error: error.message };
+
+      if (existing.later_booking_id) {
+        await supabaseAdmin
+          .from('later_bookings')
+          .update({
+            status: 'cancelled',
+            driver_id: null,
+            assigned_driver_name: null,
+            assignment_status: null,
+            cancellation_note: note,
+            cancelled_by: 'admin',
+          })
+          .eq('id', existing.later_booking_id);
+
+        await logAssignmentEvent({
+          laterBookingId: existing.later_booking_id,
+          eventType: 'cancelled',
+          driverId: existing.assigned_driver_id,
+          driverName: existing.assigned_driver_name,
+          note,
+        });
+      }
+    } else {
+      const { data: existing, error: existingError } = await supabaseAdmin
+        .from('later_bookings')
+        .select('id, status, driver_id, assigned_driver_name')
+        .eq('id', bookingId)
+        .maybeSingle();
+
+      if (existingError || !existing) {
+        return { success: false, error: existingError?.message || 'Booking not found.' };
+      }
+      if (existing.status === 'completed') {
+        return { success: false, error: 'Completed bookings cannot be cancelled.' };
+      }
+      if (existing.status === 'cancelled' || existing.status === 'cancelled_no_drivers') {
+        return { success: true, alreadyCancelled: true };
+      }
+
+      const { error } = await supabaseAdmin
+        .from('later_bookings')
+        .update({
+          status: 'cancelled',
+          driver_id: null,
+          assigned_driver_name: null,
+          assignment_status: null,
+          cancellation_note: note,
+          cancelled_by: 'admin',
+        })
+        .eq('id', bookingId);
+
+      if (error) return { success: false, error: error.message };
+
+      await logAssignmentEvent({
+        laterBookingId: bookingId,
+        eventType: 'cancelled',
+        driverId: existing.driver_id,
+        driverName: existing.assigned_driver_name,
+        note,
+      });
+
+      await supabaseAdmin
+        .from('web_booker')
+        .update({
+          status: 'cancelled',
+          assigned_driver_id: null,
+          assigned_driver_name: null,
+          dispatch_note: note,
+        })
+        .eq('later_booking_id', bookingId);
+    }
+
+    revalidatePath('/scheduled-rides');
+    revalidatePath('/web-booker/dashboard');
+    revalidatePath('/rides');
+    return { success: true };
+  } catch (err: any) {
+    console.error('[cancelScheduledRideAction] Error:', err);
+    return { success: false, error: err.message };
+  }
+}
+
 function mapLaterStatusToWebBooker(status?: string | null): string {
   switch ((status || '').toLowerCase()) {
     case 'driver_accepted':
@@ -167,13 +367,14 @@ export async function manualAssignDriverToScheduled(
         return { success: true };
       }
 
+      const wasDeclined = (existingBooking.assignment_status || '').toLowerCase() === 'declined';
       const assignedAt = new Date().toISOString();
       // later_bookings_status_check only allows values like scheduled / driver_accepted /
       // cancelled — NOT driver_assigned. Keep status as scheduled (or current) and track
       // the admin assign via assignment_status = pending until the driver accepts.
       const nextStatus = hasLockedAssignmentStatus(existingBooking.status)
         ? existingBooking.status
-        : (existingBooking.status === 'cancelled' ? 'scheduled' : (existingBooking.status || 'scheduled'));
+        : 'scheduled';
 
       const { error } = await supabaseAdmin
         .from('later_bookings')
@@ -183,8 +384,11 @@ export async function manualAssignDriverToScheduled(
           assignment_status: 'pending',
           assigned_at: assignedAt,
           assignment_responded_at: null,
-          assignment_note: `Manually assigned to ${driverName} by admin.`,
-          status: nextStatus === 'driver_assigned' ? 'scheduled' : nextStatus,
+          declined_at: null,
+          assignment_note: wasDeclined
+            ? `Re-assigned to ${driverName} by admin after previous decline.`
+            : `Manually assigned to ${driverName} by admin.`,
+          status: nextStatus === 'driver_assigned' || nextStatus === 'marketplace' ? 'scheduled' : nextStatus,
         })
         .eq('id', bookingId);
 
@@ -263,9 +467,21 @@ export async function manualAssignDriverToScheduled(
           assigned_driver_name: driverName,
           status: 'driver_assigned',
           dispatch_mode: 'manual',
-          dispatch_note: `Manually assigned to ${driverName} by admin.`,
+          dispatch_note: wasDeclined
+            ? `Re-assigned to ${driverName} by admin after previous decline.`
+            : `Manually assigned to ${driverName} by admin.`,
         })
         .eq('later_booking_id', bookingId);
+
+      await logAssignmentEvent({
+        laterBookingId: bookingId,
+        eventType: wasDeclined ? 'reassigned' : 'assigned',
+        driverId,
+        driverName,
+        note: wasDeclined
+          ? `Re-assigned to ${driverName} by admin after previous decline.`
+          : `Manually assigned to ${driverName} by admin.`,
+      });
     }
 
     console.log(`[ManualAssign] Driver ${driverName} manually assigned to ${source} ride ${bookingId}`);
