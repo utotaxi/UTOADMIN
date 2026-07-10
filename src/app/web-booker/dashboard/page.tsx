@@ -13,10 +13,16 @@ function getStatusConfig(status: string) {
                 classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
                 icon: <Store className="w-3 h-3" />,
             };
+        case 'driver_accepted':
+            return { 
+                label: 'DRIVER ACCEPTED', 
+                classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+                icon: <Car className="w-3 h-3" />,
+            };
         case 'driver_assigned':
             return { 
                 label: 'DRIVER ASSIGNED', 
-                classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+                classes: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
                 icon: <Car className="w-3 h-3" />,
             };
         case 'searching_driver':
@@ -135,7 +141,14 @@ export default async function WebBookerDashboardPage() {
                                 return (
                                     <tr key={booking.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                                         <td className="p-4 font-black text-slate-800 dark:text-slate-200 tracking-wider">
-                                            {booking.reference || '---'}
+                                            <div className="flex flex-col gap-1">
+                                                <span>{booking.reference || '---'}</span>
+                                                {booking.later_booking_id && (
+                                                    <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                                                        App Scheduled
+                                                    </span>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="p-4 text-muted-foreground font-medium">
                                             {booking.scheduled_time ? new Date(booking.scheduled_time).toLocaleString('en-GB', { timeZone: 'Europe/London', dateStyle: 'short', timeStyle: 'short' }) : 'ASAP'}

@@ -14,6 +14,7 @@ import {
     ArrowLeft,
 } from "lucide-react";
 import AssignDriverButton from "./AssignDriverButton";
+import EditLaterBookingButton from "./EditLaterBookingButton";
 import { formatUkDateShort, formatUkTime } from "@/lib/uk-datetime";
 import {
     buildRiderLookup,
@@ -50,7 +51,9 @@ function mapWebBookerStatus(status?: string): string {
 }
 
 // Once a ride is accepted / started by a driver it should not be reassigned.
-function isDriverAssignmentLocked(status?: string): boolean {
+function isDriverAssignmentLocked(status?: string, assignmentStatus?: string): boolean {
+    if ((assignmentStatus || '').toLowerCase() === 'accepted') return true;
+    if ((assignmentStatus || '').toLowerCase() === 'declined') return false;
     return ['driver_accepted', 'accepted', 'arrived', 'started', 'in_progress', 'completed'].includes((status || '').toLowerCase());
 }
 
@@ -261,8 +264,8 @@ export default async function ScheduledRidesPage() {
         return {
             ...b,
             rider_name: resolveRiderName(b, riderLookup),
-            driver_name: (dId ? driverMap[dId] : null) || b.assigned_driver_name || null,
-            is_driver_assignment_locked: isDriverAssignmentLocked(b.status),
+            driver_name: b.assigned_driver_name || (dId ? driverMap[dId] : null) || null,
+            is_driver_assignment_locked: isDriverAssignmentLocked(b.status, b.assignment_status),
         };
     });
 
@@ -294,7 +297,7 @@ export default async function ScheduledRidesPage() {
                 );
             case 'driver_assigned':
                 return (
-                    <span className="inline-flex items-center gap-1.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-2.5 py-1 rounded-full text-xs font-semibold">
+                    <span className="inline-flex items-center gap-1.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 px-2.5 py-1 rounded-full text-xs font-semibold">
                         <CheckCircle2 className="w-3 h-3" /> Driver Assigned
                     </span>
                 );
@@ -475,6 +478,7 @@ export default async function ScheduledRidesPage() {
                                                         currentDriverName={booking.driver_name}
                                                         source={booking.source}
                                                         status={booking.status}
+                                                        assignmentStatus={booking.assignment_status}
                                                         lockAssignment={booking.is_driver_assignment_locked}
                                                     />
                                                 </td>
@@ -527,7 +531,7 @@ export default async function ScheduledRidesPage() {
                                                             <Pencil className="w-3.5 h-3.5" /> Edit details
                                                         </Link>
                                                     ) : (
-                                                        <span className="text-xs text-muted-foreground">—</span>
+                                                        <EditLaterBookingButton bookingId={booking.assignBookingId} />
                                                     )}
                                                 </td>
                                             </tr>

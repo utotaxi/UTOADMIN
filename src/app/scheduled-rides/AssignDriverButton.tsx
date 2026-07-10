@@ -37,12 +37,14 @@ export default function AssignDriverButton({
   currentDriverName,
   source = 'later',
   status,
+  assignmentStatus,
   lockAssignment = false,
 }: {
   bookingId: string;
   currentDriverName: string | null;
   source?: 'later' | 'web_booker';
   status?: string;
+  assignmentStatus?: string | null;
   lockAssignment?: boolean;
 }) {
   const router = useRouter();
@@ -55,6 +57,7 @@ export default function AssignDriverButton({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const assignmentLocked = lockAssignment;
+  const responseStatus = (assignmentStatus || '').toLowerCase();
 
   // Sync internal state when server component updates the prop
   useEffect(() => {
@@ -143,22 +146,33 @@ export default function AssignDriverButton({
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
             <span className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate max-w-[120px]">{assigned}</span>
           </div>
-          {assignmentLocked ? (
+          {assignmentLocked || responseStatus === 'accepted' ? (
             <span
               className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800"
               title={status ? `Driver already accepted (${status.replace(/_/g, ' ')})` : 'Driver already accepted'}
             >
               Accepted
             </span>
+          ) : responseStatus === 'declined' ? (
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
+              Declined
+            </span>
           ) : (
-            <button
-              onClick={handleOpen}
-              disabled={assigning}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600 hover:text-slate-700 dark:hover:text-slate-200 transition-colors disabled:opacity-40 cursor-pointer border border-slate-200 dark:border-slate-600"
-            >
-              <ChevronDown className="w-2.5 h-2.5" />
-              Change
-            </button>
+            <>
+              {(responseStatus === 'pending' || status === 'driver_assigned') && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                  Pending
+                </span>
+              )}
+              <button
+                onClick={handleOpen}
+                disabled={assigning}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600 hover:text-slate-700 dark:hover:text-slate-200 transition-colors disabled:opacity-40 cursor-pointer border border-slate-200 dark:border-slate-600"
+              >
+                <ChevronDown className="w-2.5 h-2.5" />
+                Change
+              </button>
+            </>
           )}
         </div>
       ) : (

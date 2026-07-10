@@ -5,14 +5,56 @@ import { revalidatePath } from "next/cache";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function updateBookingAction(id: string, updateData: Record<string, any>) {
+    const { data: existing, error: existingError } = await supabaseAdmin
+        .from('web_booker')
+        .select('id, later_booking_id')
+        .eq('id', id)
+        .maybeSingle();
+
+    if (existingError) throw new Error(existingError.message);
+
     const { error } = await supabaseAdmin
         .from('web_booker')
         .update(updateData)
         .eq('id', id);
 
     if (error) throw new Error(error.message);
+
+    // Keep the source later_bookings row in sync when this is an app scheduled ride mirror.
+    if (existing?.later_booking_id) {
+        const laterUpdate: Record<string, unknown> = {};
+        if (updateData.pickup_address !== undefined) laterUpdate.pickup_address = updateData.pickup_address;
+        if (updateData.dropoff_address !== undefined) laterUpdate.dropoff_address = updateData.dropoff_address;
+        if (updateData.estimated_price !== undefined) laterUpdate.estimated_fare = updateData.estimated_price;
+        if (updateData.scheduled_time !== undefined) laterUpdate.pickup_at = updateData.scheduled_time;
+        if (updateData.status !== undefined) {
+            laterUpdate.status = updateData.status;
+            if (updateData.status === 'driver_accepted' || updateData.status === 'accepted') {
+                laterUpdate.assignment_status = 'accepted';
+                laterUpdate.assignment_responded_at = new Date().toISOString();
+            } else if (updateData.status === 'driver_assigned') {
+                laterUpdate.assignment_status = 'pending';
+            } else if (updateData.status === 'cancelled') {
+                laterUpdate.cancellation_note = updateData.dispatch_note || 'Cancelled from Web Booker review.';
+            }
+        }
+        if (updateData.assigned_driver_id !== undefined) laterUpdate.driver_id = updateData.assigned_driver_id;
+        if (updateData.assigned_driver_name !== undefined) laterUpdate.assigned_driver_name = updateData.assigned_driver_name;
+
+        if (Object.keys(laterUpdate).length > 0) {
+            const { error: laterError } = await supabaseAdmin
+                .from('later_bookings')
+                .update(laterUpdate)
+                .eq('id', existing.later_booking_id);
+            if (laterError) {
+                console.warn('[updateBookingAction] Failed to sync later_bookings:', laterError.message);
+            }
+        }
+    }
+
     revalidatePath(`/web-booker/dashboard/${id}`);
     revalidatePath('/web-booker/dashboard');
+    revalidatePath('/scheduled-rides');
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
