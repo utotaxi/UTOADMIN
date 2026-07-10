@@ -113,21 +113,31 @@ function applyPaidDiscountToLeg(
     totalEstimated: number | null,
     amountPaid: number | null
 ): number {
-    if (
-        amountPaid == null ||
-        totalEstimated == null ||
-        totalEstimated <= 0 ||
-        amountPaid <= 0 ||
-        amountPaid >= totalEstimated
-    ) {
+    if (amountPaid == null || totalEstimated == null || totalEstimated <= 0) {
         return legFare;
     }
+
+    // Free / fully discounted coupon ride.
+    if (amountPaid === 0) return 0;
+
+    if (amountPaid >= totalEstimated) return legFare;
 
     const ratio = amountPaid / totalEstimated;
     return Math.round(legFare * ratio * 100) / 100;
 }
 
-/** Final fare for a later_bookings leg, honouring amount_paid discounts when set. */
+function isCouponPayment(booking: BookingLike): boolean {
+    const status = nonEmptyString(booking.payment_status)?.toLowerCase();
+    return status === "coupon" || status === "free";
+}
+
+/**
+ * Final fare for a later_bookings leg.
+ *
+ * Coupon bookings store the payable amount in `estimated_fare` / `amount_paid`
+ * (often 0). `outbound_fare` may still hold the pre-discount original price, so
+ * it must not win over the discounted fields.
+ */
 export function resolveLaterLegFare(
     booking: BookingLike,
     leg: "single" | "outbound" | "return"
@@ -136,27 +146,55 @@ export function resolveLaterLegFare(
     const estimatedFare = toNum(booking.estimated_fare);
     const outboundFare = toNum(booking.outbound_fare);
     const returnFare = toNum(booking.return_fare);
+    const couponRide = isCouponPayment(booking);
 
-    if (leg === "outbound") {
-        const base = outboundFare
-            ?? (estimatedFare != null && returnFare != null
-                ? Math.round((estimatedFare - returnFare) * 100) / 100
-                : estimatedFare)
-            ?? 0;
-        return applyPaidDiscountToLeg(base, estimatedFare, amountPaid);
+    // Discounted payable total for the whole booking (includes free coupon = 0).
+    const discountedTotal =
+        amountPaid != null
+            ? amountPaid
+            : (couponRide && estimatedFare != null ? estimatedFare : null);
+
+    if (leg === "single") {
+        if (discountedTotal != null) return discountedTotal;
+        // Prefer estimated_fare (final/discounted) over outbound_fare (often original).
+        if (estimatedFare != null) return estimatedFare;
+        return outboundFare ?? 0;
     }
 
-    if (leg === "return") {
-        const base = returnFare
-            ?? (estimatedFare != null && outboundFare != null
-                ? Math.round((estimatedFare - outboundFare) * 100) / 100
-                : estimatedFare)
-            ?? 0;
-        return applyPaidDiscountToLeg(base, estimatedFare, amountPaid);
+    const originalOutbound = outboundFare
+        ?? (estimatedFare != null && returnFare != null
+            ? Math.round((estimatedFare - returnFare) * 100) / 100
+            : estimatedFare)
+        ?? 0;
+    const originalReturn = returnFare
+        ?? (estimatedFare != null && outboundFare != null
+            ? Math.round((estimatedFare - outboundFare) * 100) / 100
+            : estimatedFare)
+        ?? 0;
+
+    if (discountedTotal != null) {
+        const originalTotal = (outboundFare ?? 0) + (returnFare ?? 0) || estimatedFare;
+        if (leg === "outbound") {
+            return applyPaidDiscountToLeg(originalOutbound, originalTotal, discountedTotal);
+        }
+        return applyPaidDiscountToLeg(originalReturn, originalTotal, discountedTotal);
     }
 
-    if (amountPaid != null && amountPaid > 0) return amountPaid;
-    return outboundFare ?? estimatedFare ?? 0;
+    // Also treat estimated_fare < outbound+return as a discount on the total.
+    if (
+        estimatedFare != null &&
+        outboundFare != null &&
+        returnFare != null &&
+        estimatedFare < outboundFare + returnFare
+    ) {
+        const originalTotal = outboundFare + returnFare;
+        if (leg === "outbound") {
+            return applyPaidDiscountToLeg(outboundFare, originalTotal, estimatedFare);
+        }
+        return applyPaidDiscountToLeg(returnFare, originalTotal, estimatedFare);
+    }
+
+    return leg === "outbound" ? originalOutbound : originalReturn;
 }
 
 /** Final fare for web_booker rows (estimated_price is the stored final/admin price). */
@@ -172,11 +210,19 @@ export function resolveWebBookerFare(booking: BookingLike): number {
 export function resolveOriginalLaterFare(booking: BookingLike, leg: "single" | "outbound" | "return"): number | null {
     if (leg === "outbound") return toNum(booking.outbound_fare) ?? toNum(booking.estimated_fare);
     if (leg === "return") return toNum(booking.return_fare) ?? toNum(booking.estimated_fare);
+    // For coupon rides outbound_fare is the pre-discount original.
+    if (isCouponPayment(booking) || (toNum(booking.amount_paid) === 0 && toNum(booking.estimated_fare) === 0)) {
+        return toNum(booking.outbound_fare) ?? toNum(booking.estimated_fare);
+    }
     return toNum(booking.estimated_fare);
 }
 
 export function hasLaterDiscount(booking: BookingLike): boolean {
+    if (isCouponPayment(booking)) return true;
     const amountPaid = toNum(booking.amount_paid);
     const estimatedFare = toNum(booking.estimated_fare);
-    return amountPaid != null && estimatedFare != null && amountPaid > 0 && amountPaid < estimatedFare;
+    const outboundFare = toNum(booking.outbound_fare);
+    if (amountPaid != null && estimatedFare != null && amountPaid >= 0 && amountPaid < estimatedFare) return true;
+    if (estimatedFare != null && outboundFare != null && estimatedFare < outboundFare) return true;
+    return false;
 }

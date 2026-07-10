@@ -17,9 +17,7 @@ import AssignDriverButton from "./AssignDriverButton";
 import { formatUkDateShort, formatUkTime } from "@/lib/uk-datetime";
 import {
     buildRiderLookup,
-    hasLaterDiscount,
     resolveLaterLegFare,
-    resolveOriginalLaterFare,
     resolveRiderId,
     resolveRiderName,
     resolveWebBookerFare,
@@ -94,7 +92,6 @@ function expandBookingToLegs(booking: any): any[] {
         const fare = booking.source === 'web_booker'
             ? resolveWebBookerFare(booking)
             : resolveLaterLegFare(booking, 'single');
-        const originalFare = booking.source === 'later' ? resolveOriginalLaterFare(booking, 'single') : null;
         return [{
             ...booking,
             assignBookingId,
@@ -103,17 +100,12 @@ function expandBookingToLegs(booking: any): any[] {
             legLabel: null,
             additional_stop: formatAdditionalStop(booking.stops, booking.stops_text),
             leg_fare: fare,
-            original_fare: originalFare,
-            has_discount: booking.source === 'later' && hasLaterDiscount(booking),
         }];
     }
 
-    // Round trip → split the combined fare into the two individual legs.
+    // Round trip → split into onward + return using discounted final fares.
     const outboundFare = resolveLaterLegFare(booking, 'outbound');
     const returnFare = resolveLaterLegFare(booking, 'return');
-    const originalOutbound = resolveOriginalLaterFare(booking, 'outbound');
-    const originalReturn = resolveOriginalLaterFare(booking, 'return');
-    const discounted = hasLaterDiscount(booking);
 
     const outbound = {
         ...booking,
@@ -123,8 +115,6 @@ function expandBookingToLegs(booking: any): any[] {
         legLabel: 'Onward',
         additional_stop: formatAdditionalStop(booking.stops, booking.stops_text),
         leg_fare: outboundFare,
-        original_fare: originalOutbound,
-        has_discount: discounted,
     };
 
     const returnAt = booking.return_at || null;
@@ -145,8 +135,6 @@ function expandBookingToLegs(booking: any): any[] {
         pickup_at: returnAt || booking.pickup_at,
         dropoff_by: returnDropoffBy,
         leg_fare: returnFare,
-        original_fare: originalReturn,
-        has_discount: discounted,
     };
 
     return [outbound, ret];
@@ -528,16 +516,7 @@ export default async function ScheduledRidesPage() {
                                                     )}
                                                 </td>
                                                 <td className="px-6 py-4 font-bold text-emerald-600 dark:text-emerald-400">
-                                                    <div className="flex flex-col">
-                                                        <span>
-                                                            £{Number(booking.leg_fare || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                        </span>
-                                                        {booking.has_discount && booking.original_fare != null && booking.original_fare > booking.leg_fare && (
-                                                            <span className="text-[10px] font-medium text-muted-foreground line-through">
-                                                                £{Number(booking.original_fare).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                            </span>
-                                                        )}
-                                                    </div>
+                                                    £{Number(booking.leg_fare || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     {booking.source === 'web_booker' ? (
