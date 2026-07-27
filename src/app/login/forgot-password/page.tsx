@@ -113,8 +113,8 @@ export default function ForgotPasswordPage() {
             </div>
             <h1 className="text-3xl font-bold text-white tracking-tight">Reset Password</h1>
             <p className="text-slate-400 mt-2 text-sm">
-              {step === "email" && "We will email a PIN via Supabase to verify it is you."}
-              {step === "pin" && "Enter the PIN from your email (6–8 digits)."}
+              {step === "email" && "We email an 8-digit PIN (enter the code, not a magic link)."}
+              {step === "pin" && "Enter the 8-digit PIN from your email."}
               {step === "password" && "PIN verified. Choose a new password."}
               {step === "done" && "Your password has been updated."}
             </p>
@@ -208,13 +208,13 @@ export default function ForgotPasswordPage() {
                       maxLength={8}
                       required
                       autoComplete="one-time-code"
-                      placeholder="Enter PIN"
+                      placeholder="8-digit PIN"
                       disabled={isPending}
                       className="w-full h-12 pl-11 pr-4 rounded-xl bg-white/[0.06] border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all duration-200 disabled:opacity-50 text-sm tracking-[0.35em] font-mono"
                     />
                   </div>
                   <p className="text-xs text-slate-500">
-                    Enter the PIN from your email (usually 6 or 8 digits).
+                    Use the numeric PIN from the email — ignore any magic link.
                   </p>
                   <p className="text-xs text-slate-500">
                     Sent to <span className="text-slate-300">{email}</span>

@@ -190,27 +190,7 @@ export async function requestAdminPasswordResetPin(email: string): Promise<{
     }
   }
 
-  // 1) Prefer Supabase Auth email OTP (uses Supabase Dashboard email / SMTP).
-  const { error: otpError } = await supabaseAdmin.auth.signInWithOtp({
-    email: normalized,
-    options: { shouldCreateUser: false },
-  });
-
-  if (!otpError) {
-    const started = await startPinSession(normalized, SUPABASE_OTP_PENDING);
-    if (!started.success) return started;
-    return {
-      success: true,
-      message: `A verification PIN has been sent to ${normalized} via Supabase email. It expires in ${PIN_TTL_MINUTES} minutes.`,
-    };
-  }
-
-  console.warn(
-    "[password-reset-pins] Supabase OTP email failed:",
-    otpError.message
-  );
-
-  // 2) Optional Railway Resend/SMTP custom 8-digit PIN.
+  // 1) Prefer custom 8-digit PIN when Railway Resend/SMTP is configured.
   if (hasCustomEmailTransport()) {
     const pin = generateEightDigitPin();
     const started = await startPinSession(normalized, hashPin(pin, normalized));
@@ -223,7 +203,7 @@ export async function requestAdminPasswordResetPin(email: string): Promise<{
       html: `
         <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#0f172a">
           <h2 style="margin:0 0 12px;font-size:20px">UTO Admin password reset</h2>
-          <p style="margin:0 0 16px;color:#475569">Use this 8-digit PIN to reset your admin password. It expires in <strong>${PIN_TTL_MINUTES} minutes</strong>.</p>
+          <p style="margin:0 0 16px;color:#475569">Use this <strong>8-digit PIN</strong> to reset your admin password. It expires in <strong>${PIN_TTL_MINUTES} minutes</strong>.</p>
           <div style="letter-spacing:6px;font-size:32px;font-weight:700;background:#f1f5f9;border-radius:12px;padding:16px 20px;text-align:center">${pin}</div>
           <p style="margin:16px 0 0;font-size:12px;color:#94a3b8">If you did not request this, you can ignore this email.</p>
         </div>
@@ -240,13 +220,34 @@ export async function requestAdminPasswordResetPin(email: string): Promise<{
     };
   }
 
+  // 2) Supabase Auth email OTP (project mailer). Requires Magic Link template
+  //    to use {{ .Token }} and Email OTP length = 8 in the Dashboard.
+  const { error: otpError } = await supabaseAdmin.auth.signInWithOtp({
+    email: normalized,
+    options: { shouldCreateUser: false },
+  });
+
+  if (!otpError) {
+    const started = await startPinSession(normalized, SUPABASE_OTP_PENDING);
+    if (!started.success) return started;
+    return {
+      success: true,
+      message: `A numeric PIN has been sent to ${normalized}. Enter the code from the email (not a magic link). It expires in ${PIN_TTL_MINUTES} minutes.`,
+    };
+  }
+
+  console.warn(
+    "[password-reset-pins] Supabase OTP email failed:",
+    otpError.message
+  );
+
   return {
     success: false,
     error:
       otpError.message?.includes("signups not allowed") ||
       otpError.message?.includes("User not found")
         ? "No admin account found for that email in Supabase Auth."
-        : `Could not send PIN via Supabase email (${otpError.message}). Enable Email auth OTP in Supabase Dashboard → Authentication → Providers → Email, or set RESEND_API_KEY / SMTP on Railway.`,
+        : `Could not send PIN via Supabase email (${otpError.message}). In Supabase: Authentication → Email Templates → Magic Link — use {{ .Token }} (not the link), and set Email OTP length to 8. Or set RESEND_API_KEY / SMTP on Railway.`,
   };
 }
 
