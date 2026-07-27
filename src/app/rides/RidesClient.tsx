@@ -40,6 +40,8 @@ interface RideData {
   payment_status?: string;
   vehicle_type?: string;
   passenger_count?: number;
+  /** Numeric passenger count (preferred field name from later_bookings / rides). */
+  passengers?: number;
   reference?: string;
   cancellation_reason?: string;
   rider?: { full_name: string; phone?: string; email?: string } | null;
@@ -161,12 +163,29 @@ function formatReportDateTime(dateStr: string | undefined): string {
   return `${date} ${time}`;
 }
 
-// Number of passengers for the report (falls back to vehicle type if absent).
-function getPassengers(ride: RideData): string {
-  if (ride.passenger_count != null && !Number.isNaN(Number(ride.passenger_count))) {
-    return String(ride.passenger_count);
+/**
+ * Passenger count for admin UI + council reports.
+ * Always a number (1, 2, 3…) — never vehicle type like "saloon".
+ */
+function resolvePassengerCount(ride: RideData & Record<string, unknown>): number {
+  const candidates = [
+    ride.passenger_count,
+    (ride as any).passengers,
+    (ride as any).number_of_passengers,
+    (ride as any).num_passengers,
+    (ride as any).pax,
+  ];
+  for (const raw of candidates) {
+    if (raw == null || raw === '') continue;
+    const n = typeof raw === 'number' ? raw : Number(String(raw).trim());
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
   }
-  return ride.vehicle_type || '';
+  // Unknown count: default to 1. Do NOT use vehicle_type (that produced "saloon").
+  return 1;
+}
+
+function getPassengers(ride: RideData): string {
+  return String(resolvePassengerCount(ride as RideData & Record<string, unknown>));
 }
 
 // PHD = Private Hire Driver licence (the driver's council/PHD badge number).
@@ -583,6 +602,7 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                 <th className="px-4 py-4 font-medium">Driver</th>
                 <th className="px-4 py-4 font-medium">Reference</th>
                 <th className="px-4 py-4 font-medium">Date &amp; Time</th>
+                <th className="px-4 py-4 font-medium">Passengers</th>
                 <th className="px-4 py-4 font-medium">Hirer (Rider)</th>
                 <th className="px-4 py-4 font-medium">Journey From</th>
                 <th className="px-4 py-4 font-medium">Journey To</th>
@@ -651,6 +671,11 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                           <span className="font-medium text-foreground text-xs">{formatDate(ts)}</span>
                           <span className="text-xs">{formatTime(ts)}</span>
                         </div>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="inline-flex items-center justify-center min-w-[1.75rem] px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 dark:bg-slate-800 border text-foreground">
+                          {getPassengers(ride)}
+                        </span>
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex flex-col">

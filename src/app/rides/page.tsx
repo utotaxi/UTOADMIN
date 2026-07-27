@@ -135,7 +135,13 @@ export default async function RidesPage() {
             final_price: finalFare !== originalFare ? finalFare : (b.final_price ?? undefined),
             payment_method: b.payment_method,
             vehicle_type: b.vehicle_type,
-            passenger_count: b.passenger_count,
+            // later_bookings stores the count as `passengers`; never use vehicle_type here.
+            passenger_count: Number(b.passenger_count ?? b.passengers) > 0
+                ? Number(b.passenger_count ?? b.passengers)
+                : 1,
+            passengers: Number(b.passenger_count ?? b.passengers) > 0
+                ? Number(b.passenger_count ?? b.passengers)
+                : 1,
             reference: b.reference,
             cancellation_reason: b.cancellation_reason,
             rider: resolvedName
