@@ -67,11 +67,6 @@ export type Ride = {
     /** Rider-facing banner, e.g. still finding a nearby driver after cancel. */
     rider_message?: string;
     status_message?: string;
-    /** End of the 1-minute free cancellation window (UTC ISO). */
-    free_cancel_until?: string;
-    free_cancel_seconds?: number;
-    show_free_cancel_timer?: boolean;
-    free_cancel_started_at?: string;
 
     // Relation alias
     rider?: User;
