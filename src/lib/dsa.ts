@@ -60,10 +60,15 @@ export async function findNearbyDrivers(
   options?: {
     maxRadiusMiles?: number;
     maxResults?: number;
+    /** Driver IDs that must not receive this ride (e.g. just cancelled after accept). */
+    excludeDriverIds?: string[];
   }
 ): Promise<NearbyDriver[]> {
   const maxRadius = options?.maxRadiusMiles ?? 30; // Default 30 miles radius
   const maxResults = options?.maxResults ?? 10;
+  const excludeSet = new Set(
+    (options?.excludeDriverIds || []).filter(Boolean).map((id) => String(id))
+  );
 
   // 1. Query all online & available drivers with their location
   const { data: drivers, error } = await supabaseAdmin
@@ -86,6 +91,11 @@ export async function findNearbyDrivers(
   const driversWithDistance: NearbyDriver[] = [];
 
   for (const driver of drivers) {
+    // Never rematch to a driver who just cancelled this ride
+    if (excludeSet.has(String(driver.id))) {
+      continue;
+    }
+
     const lat = driver.current_latitude;
     const lon = driver.current_longitude;
     

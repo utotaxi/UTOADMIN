@@ -7,6 +7,7 @@ import {
     resolveRiderName,
     resolveWebBookerFare,
 } from "@/lib/scheduled-booking-utils";
+import { processStuckDriverCancelRematches } from "@/lib/asap-rematch";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,14 @@ function normalizeFinishedStatus(status?: string): string {
 }
 
 export default async function RidesPage() {
+    // Fix ASAP accept→driver-cancel rides before loading the list so riders
+    // are put back into searching + rematched to other nearby drivers.
+    try {
+        await processStuckDriverCancelRematches({ lookbackMinutes: 45, limit: 30 });
+    } catch (err) {
+        console.warn("[RidesPage] ASAP rematch pass failed:", err);
+    }
+
     // Select all ride columns with `*` so optional fields (reference,
     // passenger_count, cancellation_reason, etc.) come through when present
     // without erroring on schemas that don't have them. The driver embed also

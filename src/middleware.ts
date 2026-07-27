@@ -43,8 +43,12 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isForgotPassword = pathname === "/login/forgot-password";
   const isLogin = pathname === "/login";
+  // Driver / rider apps call these when an ASAP ride is cancelled after accept.
+  const isRideRematchApi =
+    pathname === "/api/rides/driver-cancel" ||
+    pathname === "/api/rides/rematch";
 
-  const isPublicRoute = isLogin || isForgotPassword;
+  const isPublicRoute = isLogin || isForgotPassword || isRideRematchApi;
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();

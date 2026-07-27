@@ -209,13 +209,25 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
     setRidesList(rides);
   }, [rides]);
 
-  // Safety-net polling: re-fetch server data periodically so ride statuses
-  // stay current even if the realtime websocket drops or isn't enabled.
+  // Safety-net: rematch ASAP rides cancelled by the driver after accept,
+  // then refresh so the rider-facing "still finding a driver" state shows.
   useEffect(() => {
-    const interval = setInterval(() => {
-      router.refresh();
-    }, 15000);
-    return () => clearInterval(interval);
+    let cancelled = false;
+    const runRematchAndRefresh = async () => {
+      try {
+        await fetch('/api/rides/rematch');
+      } catch (err) {
+        console.warn('[Rides] rematch poll failed:', err);
+      }
+      if (!cancelled) router.refresh();
+    };
+
+    runRematchAndRefresh();
+    const interval = setInterval(runRematchAndRefresh, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [router]);
 
   // Real-time Postgres changes subscription
