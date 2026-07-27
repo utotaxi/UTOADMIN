@@ -8,6 +8,7 @@ import {
     resolveWebBookerFare,
 } from "@/lib/scheduled-booking-utils";
 import { processStuckDriverCancelRematches } from "@/lib/asap-rematch";
+import { ensurePendingRidesHaveFreeCancel } from "@/lib/asap-free-cancel";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,13 @@ export default async function RidesPage() {
         await processStuckDriverCancelRematches({ lookbackMinutes: 45, limit: 30 });
     } catch (err) {
         console.warn("[RidesPage] ASAP rematch pass failed:", err);
+    }
+
+    // Ensure every pending/rebooked ASAP ride has a visible 1-min free-cancel timer.
+    try {
+        await ensurePendingRidesHaveFreeCancel({ limit: 40 });
+    } catch (err) {
+        console.warn("[RidesPage] Free-cancel ensure pass failed:", err);
     }
 
     // Select all ride columns with `*` so optional fields (reference,

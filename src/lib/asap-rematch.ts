@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "./supabase";
 import { findNearbyDrivers, type NearbyDriver } from "./dsa";
 import { isCancelledByDriver, isRiderCancellationCredit } from "./cancellation-income";
+import { buildFreeCancelFields, FREE_CANCEL_RIDER_HINT } from "./asap-free-cancel";
 
 /** Rider-facing copy while we rematch after a driver cancel. */
 export const RIDER_REMATCH_MESSAGE =
@@ -103,6 +104,10 @@ async function softUpdateRide(rideId: string, payload: Record<string, unknown>) 
     "last_driver_cancel_at",
     "last_cancelled_driver_id",
     "rematch_started_at",
+    "free_cancel_until",
+    "free_cancel_seconds",
+    "show_free_cancel_timer",
+    "free_cancel_started_at",
   ]);
   const stripped: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(payload)) {
@@ -168,7 +173,11 @@ async function dismissDriverOffers(rideId: string, driverId?: string | null) {
       .eq("booking_id", rideId)
       .in("status", ["pending", "sent", "delivered"]);
     if (driverId) q = q.eq("driver_id", driverId);
-    await q;
+    const { error } = await q;
+    if (error) {
+      // Table may not exist in this project — ASAP matching uses rides.status=pending.
+      console.warn("[ASAP Rematch] driver_notifications dismiss skipped:", error.message);
+    }
   } catch (err) {
     console.warn("[ASAP Rematch] Failed to dismiss driver offers:", err);
   }
@@ -176,7 +185,7 @@ async function dismissDriverOffers(rideId: string, driverId?: string | null) {
 
 async function offerRideToDriver(ride: RideRow, driver: NearbyDriver) {
   try {
-    await supabaseAdmin.from("driver_notifications").insert({
+    const { error } = await supabaseAdmin.from("driver_notifications").insert({
       driver_id: driver.driver_id,
       type: "ride_request",
       title: "New Ride Request",
@@ -194,6 +203,12 @@ async function offerRideToDriver(ride: RideRow, driver: NearbyDriver) {
       distance_miles: driver.distance_miles,
       status: "pending",
     });
+    if (error) {
+      console.warn(
+        "[ASAP Rematch] driver_notifications insert skipped (matching relies on rides.pending):",
+        error.message
+      );
+    }
   } catch (err) {
     console.error("[ASAP Rematch] Failed to notify driver:", err);
   }
@@ -292,6 +307,7 @@ export async function rematchAfterDriverCancel(params: {
 
   const now = new Date().toISOString();
   const rematchCount = Number(row.rematch_count || 0) + 1;
+  const freeCancel = buildFreeCancelFields(new Date());
 
   const updated = await softUpdateRide(row.id, {
     status: "pending",
@@ -301,11 +317,13 @@ export async function rematchAfterDriverCancel(params: {
     cancellation_reason: null,
     excluded_driver_ids: excluded,
     rematch_count: rematchCount,
-    rider_message: RIDER_REMATCH_MESSAGE,
-    status_message: RIDER_REMATCH_MESSAGE,
+    rider_message: `${RIDER_REMATCH_MESSAGE} ${FREE_CANCEL_RIDER_HINT}`,
+    status_message: `${RIDER_REMATCH_MESSAGE} ${FREE_CANCEL_RIDER_HINT}`,
     last_driver_cancel_at: now,
     last_cancelled_driver_id: cancellingDriverId,
     rematch_started_at: now,
+    // Fresh 1-minute free cancel + visible countdown after rebook/rematch
+    ...freeCancel,
   });
 
   if (!updated) {
@@ -343,7 +361,7 @@ export async function rematchAfterDriverCancel(params: {
   // Optional marketplace fallback when nobody is nearby.
   if (nearby.length === 0) {
     try {
-      await supabaseAdmin.from("marketplace_rides").insert({
+      const { error } = await supabaseAdmin.from("marketplace_rides").insert({
         booking_id: row.id,
         ride_id: row.id,
         booking_source: "rides",
@@ -357,6 +375,12 @@ export async function rematchAfterDriverCancel(params: {
         vehicle_type: row.vehicle_type,
         status: "available",
       });
+      if (error) {
+        console.warn(
+          "[ASAP Rematch] marketplace_rides skipped (ride left pending for driver apps):",
+          error.message
+        );
+      }
     } catch (err) {
       console.warn("[ASAP Rematch] Marketplace fallback failed:", err);
     }

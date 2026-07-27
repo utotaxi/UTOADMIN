@@ -43,10 +43,12 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isForgotPassword = pathname === "/login/forgot-password";
   const isLogin = pathname === "/login";
-  // Driver / rider apps call these when an ASAP ride is cancelled after accept.
+  // Driver / rider apps call these when an ASAP ride is cancelled after accept,
+  // rematched, or needs a fresh 1-minute free-cancel countdown.
   const isRideRematchApi =
     pathname === "/api/rides/driver-cancel" ||
-    pathname === "/api/rides/rematch";
+    pathname === "/api/rides/rematch" ||
+    pathname === "/api/rides/free-cancel";
 
   const isPublicRoute = isLogin || isForgotPassword || isRideRematchApi;
 

@@ -210,14 +210,17 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
   }, [rides]);
 
   // Safety-net: rematch ASAP rides cancelled by the driver after accept,
-  // then refresh so the rider-facing "still finding a driver" state shows.
+  // ensure free-cancel countdown exists, then refresh the list.
   useEffect(() => {
     let cancelled = false;
     const runRematchAndRefresh = async () => {
       try {
-        await fetch('/api/rides/rematch');
+        await Promise.all([
+          fetch('/api/rides/rematch'),
+          fetch('/api/rides/free-cancel'),
+        ]);
       } catch (err) {
-        console.warn('[Rides] rematch poll failed:', err);
+        console.warn('[Rides] rematch/free-cancel poll failed:', err);
       }
       if (!cancelled) router.refresh();
     };
