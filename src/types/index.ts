@@ -61,12 +61,6 @@ export type Ride = {
     completed_at?: string;
     cancelled_at?: string;
     cancellation_reason?: string;
-    /** Drivers excluded from rematch after cancelling an accepted ASAP ride. */
-    excluded_driver_ids?: string[];
-    rematch_count?: number;
-    /** Rider-facing banner, e.g. still finding a nearby driver after cancel. */
-    rider_message?: string;
-    status_message?: string;
 
     // Relation alias
     rider?: User;
