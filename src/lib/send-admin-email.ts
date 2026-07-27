@@ -7,11 +7,23 @@ type SendEmailParams = {
   text: string;
 };
 
+export function hasCustomEmailTransport(): boolean {
+  const from =
+    process.env.EMAIL_FROM ||
+    process.env.SMTP_FROM ||
+    process.env.RESEND_FROM ||
+    "";
+  if (!from) return false;
+  if (process.env.RESEND_API_KEY) return true;
+  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    return true;
+  }
+  return false;
+}
+
 /**
- * Sends admin security emails via Resend and/or SMTP.
- * Configure one of:
- *   RESEND_API_KEY + EMAIL_FROM
- *   SMTP_HOST + SMTP_USER + SMTP_PASS + EMAIL_FROM
+ * Optional custom email (Resend / SMTP on Railway).
+ * Primary delivery uses Supabase Auth OTP email when this is not configured.
  */
 export async function sendAdminEmail(
   params: SendEmailParams
@@ -26,7 +38,7 @@ export async function sendAdminEmail(
     return {
       success: false,
       error:
-        "Email is not configured. Set EMAIL_FROM and either RESEND_API_KEY or SMTP_HOST/SMTP_USER/SMTP_PASS on the server.",
+        "Custom email is not configured. Supabase Auth email will be used when available.",
     };
   }
 
@@ -100,6 +112,6 @@ export async function sendAdminEmail(
   return {
     success: false,
     error:
-      "Email is not configured. Set RESEND_API_KEY or SMTP_HOST/SMTP_USER/SMTP_PASS (with EMAIL_FROM) on Railway.",
+      "Custom email is not configured. Set RESEND_API_KEY or SMTP_* with EMAIL_FROM, or use Supabase Auth email OTP.",
   };
 }

@@ -113,8 +113,8 @@ export default function ForgotPasswordPage() {
             </div>
             <h1 className="text-3xl font-bold text-white tracking-tight">Reset Password</h1>
             <p className="text-slate-400 mt-2 text-sm">
-              {step === "email" && "We will email an 8-digit PIN to verify it is you."}
-              {step === "pin" && "Enter the 8-digit PIN sent to your admin email."}
+              {step === "email" && "We will email a PIN via Supabase to verify it is you."}
+              {step === "pin" && "Enter the PIN from your email (6–8 digits)."}
               {step === "password" && "PIN verified. Choose a new password."}
               {step === "done" && "Your password has been updated."}
             </p>
@@ -124,7 +124,7 @@ export default function ForgotPasswordPage() {
             <div className="flex items-center gap-2 mb-6 pb-4 border-b border-white/10">
               <ShieldCheck className="h-5 w-5 text-indigo-400" />
               <span className="text-sm font-medium text-slate-300">
-                Secure reset · 8-digit email PIN
+                Secure reset · email PIN via Supabase
               </span>
             </div>
 
@@ -185,7 +185,7 @@ export default function ForgotPasswordPage() {
                       Sending PIN...
                     </>
                   ) : (
-                    "Send 8-digit PIN"
+                    "Send PIN"
                   )}
                 </button>
               </form>
@@ -195,7 +195,7 @@ export default function ForgotPasswordPage() {
               <form action={handleVerifyPin} className="space-y-5">
                 <div className="space-y-2">
                   <label htmlFor="pin" className="text-sm font-medium text-slate-300">
-                    8-digit PIN
+                    Email PIN
                   </label>
                   <div className="relative">
                     <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
@@ -204,15 +204,17 @@ export default function ForgotPasswordPage() {
                       name="pin"
                       type="text"
                       inputMode="numeric"
-                      pattern="[0-9]{8}"
+                      pattern="[0-9]{6,8}"
                       maxLength={8}
                       required
                       autoComplete="one-time-code"
-                      placeholder="12345678"
+                      placeholder="Enter PIN"
                       disabled={isPending}
                       className="w-full h-12 pl-11 pr-4 rounded-xl bg-white/[0.06] border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all duration-200 disabled:opacity-50 text-sm tracking-[0.35em] font-mono"
                     />
                   </div>
+                    Enter the PIN from your email (usually 6 or 8 digits).
+                  </p>
                   <p className="text-xs text-slate-500">
                     Sent to <span className="text-slate-300">{email}</span>
                   </p>
