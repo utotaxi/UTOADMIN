@@ -213,6 +213,7 @@ export default function ForgotPasswordPage() {
                       className="w-full h-12 pl-11 pr-4 rounded-xl bg-white/[0.06] border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all duration-200 disabled:opacity-50 text-sm tracking-[0.35em] font-mono"
                     />
                   </div>
+                  <p className="text-xs text-slate-500">
                     Enter the PIN from your email (usually 6 or 8 digits).
                   </p>
                   <p className="text-xs text-slate-500">
