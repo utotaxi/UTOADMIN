@@ -19,6 +19,13 @@ export async function findAuthAdminUserIdByEmail(
   email: string
 ): Promise<string | null> {
   const normalized = normalizeAdminEmail(email);
+
+  // Prefer linked admin_accounts row when present.
+  const account = await getAdminAccountByEmail(normalized);
+  if (account?.auth_user_id) {
+    return account.auth_user_id;
+  }
+
   const { data: admins } = await supabaseAdmin
     .from("users")
     .select("id")
@@ -31,7 +38,7 @@ export async function findAuthAdminUserIdByEmail(
     }
   }
 
-  // Also check auth users directly (admin row may be missing in public.users).
+  // Last resort: auth directory (still only used for password updates).
   const { data: authList } = await supabaseAdmin.auth.admin.listUsers({
     page: 1,
     perPage: 200,
@@ -83,13 +90,30 @@ export async function saveAdminAccount(params: {
   }
 
   const normalized = normalizeAdminEmail(params.email);
-  const payload = {
+  const existing = await getAdminAccountByEmail(normalized);
+
+  // Never wipe an existing admin profile on password save/reset.
+  const payload: Record<string, unknown> = {
     email: normalized,
     password: params.password,
-    auth_user_id: params.authUserId ?? null,
-    full_name: params.fullName || "System Admin",
     updated_at: new Date().toISOString(),
   };
+
+  if (params.authUserId) {
+    payload.auth_user_id = params.authUserId;
+  } else if (existing?.auth_user_id) {
+    payload.auth_user_id = existing.auth_user_id;
+  }
+
+  if (existing) {
+    // Keep existing full_name unless explicitly provided and non-empty.
+    if (params.fullName && params.fullName.trim()) {
+      payload.full_name = params.fullName.trim();
+    }
+  } else {
+    payload.full_name = params.fullName?.trim() || "System Admin";
+    payload.auth_user_id = params.authUserId ?? null;
+  }
 
   const { error } = await supabaseAdmin.from("admin_accounts").upsert(payload, {
     onConflict: "email",
@@ -129,7 +153,50 @@ export async function updateAdminAccountPassword(
   };
 }
 
-/** Keep Supabase Auth + public users row in sync with admin_accounts. */
+/**
+ * Password-only Auth update. Does not change email, profile, role, or public.users.
+ */
+export async function updateAuthPasswordOnly(
+  authUserId: string,
+  password: string
+): Promise<{ success: boolean; error?: string }> {
+  const { error } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
+    password,
+  });
+  if (error) {
+    return { success: false, error: error.message };
+  }
+  return { success: true };
+}
+
+/**
+ * Ensure a public.users admin row exists without overwriting existing profile data.
+ */
+async function ensureAdminUsersRowWithoutOverwrite(params: {
+  authUserId: string;
+  email: string;
+  fullName?: string;
+}): Promise<void> {
+  const { data: existing } = await supabaseAdmin
+    .from("users")
+    .select("id")
+    .eq("id", params.authUserId)
+    .maybeSingle();
+
+  if (existing) {
+    // Existing rider/admin/profile data must stay untouched on password reset/login sync.
+    return;
+  }
+
+  await supabaseAdmin.from("users").insert({
+    id: params.authUserId,
+    email: normalizeAdminEmail(params.email),
+    role: "admin",
+    full_name: params.fullName?.trim() || "System Admin",
+  });
+}
+
+/** Keep Supabase Auth in sync with admin_accounts (password). Never rewrite profile data. */
 export async function syncAdminAuthUser(
   account: AdminAccount,
   password: string
@@ -137,22 +204,43 @@ export async function syncAdminAuthUser(
   const normalized = normalizeAdminEmail(account.email);
 
   if (account.auth_user_id) {
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(
-      account.auth_user_id,
-      { password, email: normalized }
-    );
-    if (error) {
-      return { authUserId: null, error: error.message };
+    const updated = await updateAuthPasswordOnly(account.auth_user_id, password);
+    if (!updated.success) {
+      return { authUserId: null, error: updated.error };
     }
 
-    await supabaseAdmin.from("users").upsert({
-      id: account.auth_user_id,
+    await ensureAdminUsersRowWithoutOverwrite({
+      authUserId: account.auth_user_id,
       email: normalized,
-      role: "admin",
-      full_name: account.full_name || "System Admin",
+      fullName: account.full_name,
     });
 
     return { authUserId: account.auth_user_id };
+  }
+
+  // Linked auth user missing — reuse existing auth user for this email if present.
+  const existingAuthId = await findAuthAdminUserIdByEmail(normalized);
+  if (existingAuthId) {
+    const updated = await updateAuthPasswordOnly(existingAuthId, password);
+    if (!updated.success) {
+      return { authUserId: null, error: updated.error };
+    }
+
+    await supabaseAdmin
+      .from("admin_accounts")
+      .update({
+        auth_user_id: existingAuthId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", account.id);
+
+    await ensureAdminUsersRowWithoutOverwrite({
+      authUserId: existingAuthId,
+      email: normalized,
+      fullName: account.full_name,
+    });
+
+    return { authUserId: existingAuthId };
   }
 
   const { data: created, error: createError } =
@@ -173,11 +261,10 @@ export async function syncAdminAuthUser(
     .update({ auth_user_id: authUserId, updated_at: new Date().toISOString() })
     .eq("id", account.id);
 
-  await supabaseAdmin.from("users").upsert({
-    id: authUserId,
+  await ensureAdminUsersRowWithoutOverwrite({
+    authUserId,
     email: normalized,
-    role: "admin",
-    full_name: account.full_name || "System Admin",
+    fullName: account.full_name,
   });
 
   return { authUserId };
@@ -199,42 +286,55 @@ export async function countAdminAccounts(): Promise<number> {
   return count || 0;
 }
 
-/** Reset password via Supabase Auth when admin_accounts is unavailable. */
+/**
+ * Reset password only — never rewrite public.users profile/role/name
+ * and never force full_name to "System Admin".
+ */
 export async function resetPasswordViaAuth(
   email: string,
   password: string
 ): Promise<{ success: boolean; error?: string }> {
-  const authUserId = await findAuthAdminUserIdByEmail(email);
+  const normalized = normalizeAdminEmail(email);
+  const authUserId = await findAuthAdminUserIdByEmail(normalized);
 
   if (!authUserId) {
     return { success: false, error: "No admin account found for that email address." };
   }
 
-  const { error } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
-    password,
-    email: normalizeAdminEmail(email),
-  });
-
-  if (error) {
-    return { success: false, error: error.message };
+  const updated = await updateAuthPasswordOnly(authUserId, password);
+  if (!updated.success) {
+    return { success: false, error: updated.error };
   }
 
-  await supabaseAdmin.from("users").upsert({
-    id: authUserId,
-    email: normalizeAdminEmail(email),
-    role: "admin",
-    full_name: "System Admin",
-  });
-
-  // Persist to admin_accounts when the table exists.
   const tableReady = await ensureAdminAccountsTable();
   if (tableReady) {
-    await saveAdminAccount({
-      email,
-      password,
-      authUserId,
-      fullName: "System Admin",
-    });
+    const account = await getAdminAccountByEmail(normalized);
+    if (account) {
+      await updateAdminAccountPassword(normalized, password);
+      if (!account.auth_user_id) {
+        await supabaseAdmin
+          .from("admin_accounts")
+          .update({
+            auth_user_id: authUserId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", account.id);
+      }
+    } else {
+      // Create admin_accounts row without touching public.users data.
+      const { data: existingUser } = await supabaseAdmin
+        .from("users")
+        .select("full_name")
+        .eq("id", authUserId)
+        .maybeSingle();
+
+      await saveAdminAccount({
+        email: normalized,
+        password,
+        authUserId,
+        fullName: existingUser?.full_name || undefined,
+      });
+    }
   }
 
   return { success: true };

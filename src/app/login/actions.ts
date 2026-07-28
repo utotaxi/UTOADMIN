@@ -227,6 +227,7 @@ export async function resetPasswordWithPinAction(formData: FormData) {
     };
   }
 
+  // Password only — do not rewrite profile / users / role / name data.
   const { account: updated, error: updateError } = await updateAdminAccountPassword(
     email,
     password
