@@ -42,6 +42,7 @@ export async function savePricingRule(rule: any) {
       
     if (error) return { success: false, error: error.message };
     revalidatePath('/settings');
+    revalidatePath('/service-areas');
     return { success: true, data };
   } else {
     // For now, let's assume we are updating the first rule or creating one
@@ -55,6 +56,7 @@ export async function savePricingRule(rule: any) {
       
     if (error) return { success: false, error: error.message };
     revalidatePath('/settings');
+    revalidatePath('/service-areas');
     return { success: true, data };
   }
 }
@@ -71,5 +73,6 @@ export async function deletePricingRule(id: string) {
   }
 
   revalidatePath('/settings');
+  revalidatePath('/service-areas');
   return { success: true };
 }

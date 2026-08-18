@@ -3,6 +3,7 @@
 import { supabaseAdmin } from '@/lib/supabase';
 import { ServiceArea } from '@/types';
 import { revalidatePath } from 'next/cache';
+import { buildBaseAreaDescription, findBaseServiceArea } from '@/lib/pricing';
 
 export async function getServiceAreas(): Promise<ServiceArea[]> {
   const { data, error } = await supabaseAdmin
@@ -99,4 +100,50 @@ export async function toggleServiceArea(
   is_active: boolean
 ): Promise<{ success: boolean; error?: string }> {
   return updateServiceArea(id, { is_active });
+}
+
+export async function saveBaseServiceArea(input: {
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius_meters: number;
+  limit_enabled: boolean;
+}): Promise<{ success: boolean; error?: string; data?: ServiceArea }> {
+  const areas = await getServiceAreas();
+  const existing = findBaseServiceArea(areas);
+  const payload = {
+    name: input.name.trim() || 'Base Service Area',
+    description: buildBaseAreaDescription(input.limit_enabled),
+    area_type: 'circle' as const,
+    coordinates: [[input.latitude, input.longitude]] as [number, number][],
+    radius_meters: input.radius_meters,
+    color: '#4285F4',
+    is_active: true,
+  };
+
+  if (existing) {
+    const { error } = await supabaseAdmin
+      .from('service_areas')
+      .update(payload)
+      .eq('id', existing.id);
+
+    if (error) {
+      console.error('Error updating base service area:', error);
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/service-areas');
+    revalidatePath('/map');
+    revalidatePath('/settings');
+    return { success: true, data: { ...existing, ...payload } as ServiceArea };
+  }
+
+  return createServiceArea({
+    name: payload.name,
+    description: payload.description,
+    area_type: 'circle',
+    coordinates: payload.coordinates,
+    radius_meters: payload.radius_meters,
+    color: payload.color,
+  });
 }

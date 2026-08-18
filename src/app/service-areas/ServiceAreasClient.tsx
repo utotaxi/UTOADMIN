@@ -1,28 +1,22 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import {
-  MapPin,
-  Plus,
-  Trash2,
-  Save,
-  Search,
-  CheckCircle2,
-  AlertCircle,
-  Map as MapIcon,
-  ChevronDown,
-  Activity,
-  ChevronLeft,
-  ChevronRight,
-  Loader2,
-} from 'lucide-react';
+import { Plus, Trash2, Search, CheckCircle2, AlertCircle, Map as MapIcon, MapPin, ChevronDown, Activity, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { ServiceArea } from '@/types';
 import {
   createServiceArea,
   updateServiceArea,
   deleteServiceArea,
+  saveBaseServiceArea,
 } from './actions';
 import { cn } from '@/lib/utils';
+import {
+  findBaseServiceArea,
+  metersToMiles,
+  milesToMeters,
+  parseBaseAreaDescription,
+} from '@/lib/pricing';
+import ServiceAreaPricingPanel from './ServiceAreaPricingPanel';
 
 let L: any;
 if (typeof window !== 'undefined') {
@@ -31,16 +25,6 @@ if (typeof window !== 'undefined') {
 }
 
 const UK_CENTER: [number, number] = [51.8642, -2.2382];
-
-const RADIUS_OPTIONS = [
-  { label: '5 Mile', value: 8046.72 },
-  { label: '10 Mile', value: 16093.4 },
-  { label: '25 Mile', value: 40233.6 },
-  { label: '50 Mile', value: 80467.2 },
-  { label: '100 Mile', value: 160934 },
-  { label: '150 Mile', value: 241402 },
-  { label: '200 Mile', value: 321869 },
-];
 
 const AREA_TYPES = [
   { label: 'City', value: 'City' },
@@ -58,9 +42,23 @@ type TabType = 'service-area' | 'areas' | 'locations';
 
 interface ServiceAreasClientProps {
   initialAreas: ServiceArea[];
+  initialPricingRule?: Record<string, unknown> | null;
 }
 
-export default function ServiceAreasClient({ initialAreas }: ServiceAreasClientProps) {
+function getInitialBaseCircle(areas: ServiceArea[]) {
+  const base = findBaseServiceArea(areas);
+  if (!base?.coordinates?.[0] || !base.radius_meters) return null;
+  const [lat, lng] = base.coordinates[0];
+  return {
+    center: [lat, lng] as [number, number],
+    radiusMeters: base.radius_meters,
+    radiusMiles: String(Math.round(metersToMiles(base.radius_meters) * 10) / 10),
+    name: base.name || 'Gloucester, UK',
+    limitEnabled: parseBaseAreaDescription(base.description).limitEnabled,
+  };
+}
+
+export default function ServiceAreasClient({ initialAreas, initialPricingRule = null }: ServiceAreasClientProps) {
   const mapRef = useRef<any>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const detailMapRef = useRef<any>(null);
@@ -74,12 +72,14 @@ export default function ServiceAreasClient({ initialAreas }: ServiceAreasClientP
   const OSM_TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
   const MAP_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
+  const savedBase = getInitialBaseCircle(initialAreas);
+
   // Service area tab state
-  const [limitServiceArea, setLimitServiceArea] = useState(true);
-  const [searchLocation, setSearchLocation] = useState('Gloucester, UK');
-  const [radiusInput, setRadiusInput] = useState('100'); // Track raw input in miles
-  const [selectedRadius, setSelectedRadius] = useState(RADIUS_OPTIONS[4].value); // Value in meters
-  const [serviceCenter, setServiceCenter] = useState<[number, number]>(UK_CENTER);
+  const [limitServiceArea, setLimitServiceArea] = useState(savedBase?.limitEnabled ?? true);
+  const [searchLocation, setSearchLocation] = useState(savedBase?.name || 'Gloucester, UK');
+  const [radiusInput, setRadiusInput] = useState(savedBase?.radiusMiles || '7');
+  const [selectedRadius, setSelectedRadius] = useState(savedBase?.radiusMeters || milesToMeters(7));
+  const [serviceCenter, setServiceCenter] = useState<[number, number]>(savedBase?.center || UK_CENTER);
 
   // Areas tab state
   const [searchQuery, setSearchQuery] = useState('');
@@ -305,6 +305,29 @@ export default function ServiceAreasClient({ initialAreas }: ServiceAreasClientP
   }, [formCoordinates, formPolicy, selectedArea, isCreatingNew]);
 
 
+  const persistBaseCircle = async (milesOverride?: number, centerOverride?: [number, number]) => {
+    const miles = milesOverride ?? parseFloat(radiusInput);
+    const center = centerOverride || serviceCenter;
+    if (isNaN(miles) || miles <= 0) {
+      return { success: false as const, error: 'Please enter a valid radius in miles' };
+    }
+    const radiusMeters = milesToMeters(miles);
+    const result = await saveBaseServiceArea({
+      name: searchLocation.trim() || 'Base Service Area',
+      latitude: center[0],
+      longitude: center[1],
+      radius_meters: radiusMeters,
+      limit_enabled: limitServiceArea,
+    });
+    if (result.success && result.data) {
+      setAreas((prev) => {
+        const without = prev.filter((a) => a.id !== result.data!.id);
+        return [result.data as ServiceArea, ...without];
+      });
+    }
+    return result;
+  };
+
   const handleSearchLocation = async () => {
     if (!searchLocation.trim()) return;
     try {
@@ -313,7 +336,9 @@ export default function ServiceAreasClient({ initialAreas }: ServiceAreasClientP
       );
       const data = await response.json();
       if (data && data.length > 0) {
-        setServiceCenter([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
+        const nextCenter: [number, number] = [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+        setServiceCenter(nextCenter);
+        await persistBaseCircle(undefined, nextCenter);
       } else {
         showToast('error', 'Location not found.');
       }
@@ -322,11 +347,16 @@ export default function ServiceAreasClient({ initialAreas }: ServiceAreasClientP
     }
   };
 
-  const handleRadiusSubmit = () => {
+  const handleRadiusSubmit = async () => {
     const miles = parseFloat(radiusInput);
     if (!isNaN(miles) && miles > 0) {
-      setSelectedRadius(miles * 1609.34);
-      showToast('success', `Radius updated to ${miles} miles`);
+      setSelectedRadius(milesToMeters(miles));
+      const result = await persistBaseCircle(miles);
+      if (result.success) {
+        showToast('success', `Base circle saved at ${miles} miles. Inside = pickup + drop-off. Outside = base + pickup + drop-off.`);
+      } else {
+        showToast('error', result.error || 'Failed to save service area');
+      }
     } else {
       showToast('error', 'Please enter a valid radius in miles');
     }
@@ -565,9 +595,14 @@ export default function ServiceAreasClient({ initialAreas }: ServiceAreasClientP
           {activeTab === 'service-area' && (
             <div className="flex-1 flex flex-col">
               <h2 className="text-[22px] font-bold text-slate-800 tracking-tight">Your service area</h2>
-              <p className="text-[13px] text-slate-500 mb-6">
+              <p className="text-[13px] text-slate-500 mb-4">
                 You can setup your service area and use this to limit booking outside of your active service area
               </p>
+              <div className="mb-6 rounded-lg border border-sky-100 bg-sky-50 px-4 py-3 text-[13px] text-slate-700 leading-relaxed max-w-3xl">
+                This blue circle is treated as the <span className="font-semibold">base</span>. The radius can be any value (5 miles, 7 miles, and so on).
+                If pickup and drop-off are both inside the circle, the fare is <span className="font-semibold">pickup + drop-off</span>.
+                If either point is outside the circle, the fare is <span className="font-semibold">base + pickup + drop-off</span>.
+              </div>
 
               <label className="flex items-center gap-2 mb-6 cursor-pointer w-fit">
                 <div className={cn(
@@ -579,7 +614,17 @@ export default function ServiceAreasClient({ initialAreas }: ServiceAreasClientP
                 <input
                   type="checkbox"
                   checked={limitServiceArea}
-                  onChange={(e) => setLimitServiceArea(e.target.checked)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setLimitServiceArea(checked);
+                    void saveBaseServiceArea({
+                      name: searchLocation.trim() || 'Base Service Area',
+                      latitude: serviceCenter[0],
+                      longitude: serviceCenter[1],
+                      radius_meters: selectedRadius,
+                      limit_enabled: checked,
+                    });
+                  }}
                   className="hidden"
                 />
                 <span className="text-[14px] text-slate-700">Limit my service area</span>
@@ -629,6 +674,19 @@ export default function ServiceAreasClient({ initialAreas }: ServiceAreasClientP
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" /></svg>
                 </button>
               </div>
+
+              <ServiceAreaPricingPanel
+                initialPricingRule={initialPricingRule}
+                baseAddress={searchLocation}
+                onToast={showToast}
+                onBeforeSave={async () => {
+                  const miles = parseFloat(radiusInput);
+                  if (!isNaN(miles) && miles > 0) {
+                    setSelectedRadius(milesToMeters(miles));
+                    await persistBaseCircle(miles);
+                  }
+                }}
+              />
             </div>
           )}
 

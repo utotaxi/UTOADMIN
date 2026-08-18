@@ -3,35 +3,20 @@
 import { useState, useCallback } from 'react';
 import { ServiceArea } from '@/types';
 import { savePricingRule, deletePricingRule } from './actions';
-import { Plus, X, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-interface MileTier {
-  id: string;
-  after_miles: string;
-}
-
-interface MinuteTier {
-  id: string;
-  after_minutes: string;
-}
-
-interface VehiclePricing {
-  enabled: boolean;
-  min_price: string;
-  waiting_price: string;
-  start_price: string;
-  base_mile_price: string;
-  base_minute_price: string;
-  mile_tier_prices: Record<string, string>;
-  minute_tier_prices: Record<string, string>;
-}
-
-const VEHICLE_TYPES = [
-  'Saloon',
-  'People Carrier',
-  'Minibus'
-];
+import PricingGrid from '@/components/PricingGrid';
+import {
+  DEFAULT_MILE_TIERS,
+  DEFAULT_VEHICLE_DATA,
+  SERVICE_AREA_FIXED_CALCULATION,
+  VEHICLE_TYPES,
+  buildInitialVehicles,
+  formatVehiclesForSave,
+  type MileTier,
+  type MinuteTier,
+  type VehiclePricing,
+} from '@/lib/pricing';
 
 interface SettingsClientProps {
   initialAreas: ServiceArea[];
@@ -60,55 +45,9 @@ export default function SettingsClient({ initialAreas, initialPricingRule }: Set
   const [applyWebBooker, setApplyWebBooker] = useState<boolean>(initialPricingRule?.apply_web_booker ?? true);
   const [applyDispatchPanel, setApplyDispatchPanel] = useState<boolean>(initialPricingRule?.apply_dispatch_panel ?? true);
   
-  const [mileTiers, setMileTiers] = useState<MileTier[]>(initialPricingRule?.mile_tiers || [
-    { id: 'id1', after_miles: '25' },
-    { id: 'id2', after_miles: '65' }
-  ]);
+  const [mileTiers, setMileTiers] = useState<MileTier[]>(initialPricingRule?.mile_tiers || DEFAULT_MILE_TIERS);
   const [minuteTiers, setMinuteTiers] = useState<MinuteTier[]>(initialPricingRule?.minute_tiers || []);
-
-  const defaultVehicleData = {
-    enabled: true,
-    min_price: '30.00',
-    waiting_price: '0.40',
-    start_price: '4.00',
-    base_mile_price: '1.00',
-    base_minute_price: '0.00',
-    mile_tier_prices: { 'id1': '2.60', 'id2': '1.80' },
-    minute_tier_prices: {}
-  };
-
-  const getInitialVehicles = () => {
-    if (initialPricingRule?.vehicles) {
-      const dbVehicles = initialPricingRule.vehicles;
-      const v: Record<string, VehiclePricing> = {};
-      VEHICLE_TYPES.forEach(tag => {
-        if (dbVehicles[tag]) {
-          const dv = dbVehicles[tag];
-          v[tag] = {
-            enabled: dv.enabled ?? true,
-            min_price: String(dv.min_price ?? '30.00'),
-            waiting_price: String(dv.waiting_price ?? '0.40'),
-            start_price: String(dv.start_price ?? '4.00'),
-            base_mile_price: String(dv.base_mile_price ?? '1.00'),
-            base_minute_price: String(dv.base_minute_price ?? '0.00'),
-            mile_tier_prices: Object.fromEntries(
-              Object.entries(dv.mile_tier_prices || {}).map(([k, val]) => [k, String(val)])
-            ) as Record<string, string>,
-            minute_tier_prices: Object.fromEntries(
-              Object.entries(dv.minute_tier_prices || {}).map(([k, val]) => [k, String(val)])
-            ) as Record<string, string>
-          };
-        } else {
-          v[tag] = { ...defaultVehicleData };
-        }
-      });
-      return v;
-    }
-    const v: Record<string, VehiclePricing> = {};
-    VEHICLE_TYPES.forEach(tag => v[tag] = { ...defaultVehicleData });
-    return v;
-  };
-  const [vehicles, setVehicles] = useState<Record<string, VehiclePricing>>(getInitialVehicles());
+  const [vehicles, setVehicles] = useState<Record<string, VehiclePricing>>(buildInitialVehicles(initialPricingRule));
 
   const handleVehicleChange = (vType: string, field: keyof VehiclePricing, val: any) => {
     setVehicles(prev => ({
@@ -195,32 +134,6 @@ export default function SettingsClient({ initialAreas, initialPricingRule }: Set
   };
 
   const saveToSupabase = async () => {
-    const formattedVehicles: any = {};
-    Object.keys(vehicles).forEach(v => {
-      const data = vehicles[v];
-      
-      const parsedMileTiers: any = {};
-      Object.keys(data.mile_tier_prices || {}).forEach(k => {
-        parsedMileTiers[k] = parseFloat(String(data.mile_tier_prices[k])) || 0;
-      });
-
-      const parsedMinuteTiers: any = {};
-      Object.keys(data.minute_tier_prices || {}).forEach(k => {
-        parsedMinuteTiers[k] = parseFloat(String(data.minute_tier_prices[k])) || 0;
-      });
-
-      formattedVehicles[v] = {
-        enabled: data.enabled ?? true,
-        min_price: parseFloat(String(data.min_price)) || 0,
-        waiting_price: parseFloat(String(data.waiting_price)) || 0,
-        start_price: parseFloat(String(data.start_price)) || 0,
-        base_mile_price: parseFloat(String(data.base_mile_price)) || 0,
-        base_minute_price: parseFloat(String(data.base_minute_price)) || 0,
-        mile_tier_prices: parsedMileTiers,
-        minute_tier_prices: parsedMinuteTiers,
-      };
-    });
-
     const payload = {
       ...(id && { id }),
       rule_name: ruleName,
@@ -234,7 +147,7 @@ export default function SettingsClient({ initialAreas, initialPricingRule }: Set
       dropoff_area: dropoffArea,
       apply_web_booker: applyWebBooker,
       apply_dispatch_panel: applyDispatchPanel,
-      vehicles: formattedVehicles,
+      vehicles: formatVehiclesForSave(vehicles),
       mile_tiers: mileTiers,
       minute_tiers: minuteTiers
     };
@@ -278,7 +191,7 @@ export default function SettingsClient({ initialAreas, initialPricingRule }: Set
       setMinuteTiers([]);
       
       const resetV: Record<string, VehiclePricing> = {};
-      VEHICLE_TYPES.forEach(tag => resetV[tag] = { ...defaultVehicleData });
+      VEHICLE_TYPES.forEach(tag => resetV[tag] = { ...DEFAULT_VEHICLE_DATA, mile_tier_prices: { ...DEFAULT_VEHICLE_DATA.mile_tier_prices } });
       setVehicles(resetV);
     } else {
       showToast('error', res.error || 'Failed to delete pricing rule.');
@@ -373,6 +286,7 @@ export default function SettingsClient({ initialAreas, initialPricingRule }: Set
                 className="w-full max-w-2xl border-b border-slate-400 py-1.5 text-[13px] focus:outline-none bg-transparent mb-6 text-slate-700"
               >
                 <option>Fixed Start Point Only: [Base Address] → [Pickup Address] → [Drop-off Address]</option>
+                <option>{SERVICE_AREA_FIXED_CALCULATION}</option>
               </select>
 
               <div className="max-w-xl">
@@ -439,154 +353,20 @@ export default function SettingsClient({ initialAreas, initialPricingRule }: Set
         </div>
 
         {/* Pricing Grid */}
-        <div className="pt-8 overflow-x-auto">
-          <table className="w-full text-sm text-left whitespace-nowrap">
-            <thead>
-              <tr className="border-b border-slate-100">
-                <th className="font-semibold pb-4 w-40 text-slate-800">Product pricing</th>
-                {VEHICLE_TYPES.map(v => (
-                  <th key={v} className="font-semibold pb-4 px-4 w-48 text-slate-800 truncate">{v}</th>
-                ))}
-              </tr>
-              <tr>
-                <td className="py-4"></td>
-                {VEHICLE_TYPES.map(v => (
-                  <td key={v} className="px-4 py-4">
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" className="sr-only peer" checked={vehicles[v]?.enabled} onChange={(e) => handleVehicleChange(v, 'enabled', e.target.checked)} />
-                      <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#0ea5e9]"></div>
-                    </label>
-                  </td>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {/* Basic Fields */}
-              {[
-                { label: 'Minimum price', key: 'min_price' },
-                { label: 'Waiting price p/min', key: 'waiting_price' },
-                { label: 'Start price', key: 'start_price' },
-              ].map(row => (
-                <tr key={row.key}>
-                  <td className="py-3 text-slate-500 font-medium">{row.label}</td>
-                  {VEHICLE_TYPES.map(v => (
-                    <td key={v} className="px-4 py-3">
-                      <div className="flex items-center gap-1 border-b border-slate-300 w-32 pb-0.5">
-                        <span className="text-slate-500">£</span>
-                        <input
-                          type="text"
-                          value={vehicles[v]?.[row.key as keyof VehiclePricing] as string || '0.00'}
-                          onChange={(e) => handleVehicleChange(v, row.key as keyof VehiclePricing, e.target.value)}
-                          className="w-full focus:outline-none bg-transparent"
-                        />
-                      </div>
-                    </td>
-                  ))}
-                </tr>
-              ))}
-
-              {/* Mile Pricing */}
-              <tr>
-                <td className="py-3 flex items-center justify-between pr-4 font-medium text-slate-500">
-                  <span>Mile price</span>
-                  <button onClick={addMileTier} className="text-slate-400 hover:text-slate-600 font-bold text-lg leading-none">+</button>
-                </td>
-                {VEHICLE_TYPES.map(v => (
-                  <td key={v} className="px-4 py-3">
-                    <div className="flex items-center gap-1 border-b border-slate-300 w-32 pb-0.5">
-                      <span className="text-slate-500">£</span>
-                      <input
-                        type="text"
-                        value={vehicles[v]?.base_mile_price || '0.00'}
-                        onChange={(e) => handleVehicleChange(v, 'base_mile_price', e.target.value)}
-                        className="w-full focus:outline-none bg-transparent"
-                      />
-                    </div>
-                  </td>
-                ))}
-              </tr>
-
-              {mileTiers.map((tier) => (
-                <tr key={tier.id}>
-                  <td className="py-3 pr-4 flex items-center gap-2 text-slate-500">
-                    <span>- After</span>
-                    <input 
-                      type="text" 
-                      value={tier.after_miles} 
-                      onChange={(e) => updateMileTierValue(tier.id, e.target.value)} 
-                      className="w-8 border-b border-slate-300 text-center focus:outline-none bg-transparent"
-                    />
-                    <span>mi</span>
-                    <button onClick={() => removeMileTier(tier.id)} className="ml-auto text-red-500 font-bold"><X size={14}/></button>
-                  </td>
-                  {VEHICLE_TYPES.map(v => (
-                    <td key={v} className="px-4 py-3">
-                      <div className="flex items-center gap-1 border-b border-slate-300 w-32 pb-0.5">
-                        <span className="text-slate-500">£</span>
-                        <input
-                          type="text"
-                          value={vehicles[v]?.mile_tier_prices[tier.id] || '0.00'}
-                          onChange={(e) => handleTierPriceChange(v, 'mile', tier.id, e.target.value)}
-                          className="w-full focus:outline-none bg-transparent"
-                        />
-                      </div>
-                    </td>
-                  ))}
-                </tr>
-              ))}
-
-              {/* Minute Pricing */}
-              <tr>
-                <td className="py-3 flex items-center justify-between pr-4 font-medium text-slate-500 mt-2">
-                  <span>Minute price</span>
-                  <button onClick={addMinuteTier} className="text-slate-400 hover:text-slate-600 font-bold text-lg leading-none">+</button>
-                </td>
-                {VEHICLE_TYPES.map(v => (
-                  <td key={v} className="px-4 py-3">
-                    <div className="flex items-center gap-1 border-b border-slate-300 w-32 pb-0.5">
-                      <span className="text-slate-500">£</span>
-                      <input
-                        type="text"
-                        value={vehicles[v]?.base_minute_price || '0.00'}
-                        onChange={(e) => handleVehicleChange(v, 'base_minute_price', e.target.value)}
-                        className="w-full focus:outline-none bg-transparent"
-                      />
-                    </div>
-                  </td>
-                ))}
-              </tr>
-
-              {minuteTiers.map((tier) => (
-                <tr key={tier.id}>
-                  <td className="py-3 pr-4 flex items-center gap-2 text-slate-500">
-                    <span>- After</span>
-                    <input 
-                      type="text" 
-                      value={tier.after_minutes} 
-                      onChange={(e) => updateMinuteTierValue(tier.id, e.target.value)} 
-                      className="w-8 border-b border-slate-300 text-center focus:outline-none bg-transparent"
-                    />
-                    <span>min</span>
-                    <button onClick={() => removeMinuteTier(tier.id)} className="ml-auto text-red-500 font-bold"><X size={14}/></button>
-                  </td>
-                  {VEHICLE_TYPES.map(v => (
-                    <td key={v} className="px-4 py-3">
-                      <div className="flex items-center gap-1 border-b border-slate-300 w-32 pb-0.5">
-                        <span className="text-slate-500">£</span>
-                        <input
-                          type="text"
-                          value={vehicles[v]?.minute_tier_prices[tier.id] || '0.00'}
-                          onChange={(e) => handleTierPriceChange(v, 'minute', tier.id, e.target.value)}
-                          className="w-full focus:outline-none bg-transparent"
-                        />
-                      </div>
-                    </td>
-                  ))}
-                </tr>
-              ))}
-
-            </tbody>
-          </table>
+        <div className="pt-8">
+          <PricingGrid
+            vehicles={vehicles}
+            mileTiers={mileTiers}
+            minuteTiers={minuteTiers}
+            onVehicleChange={handleVehicleChange}
+            onTierPriceChange={handleTierPriceChange}
+            onAddMileTier={addMileTier}
+            onRemoveMileTier={removeMileTier}
+            onUpdateMileTier={updateMileTierValue}
+            onAddMinuteTier={addMinuteTier}
+            onRemoveMinuteTier={removeMinuteTier}
+            onUpdateMinuteTier={updateMinuteTierValue}
+          />
         </div>
 
         {/* Bottom Actions */}
