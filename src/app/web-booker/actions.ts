@@ -2,6 +2,7 @@
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { shouldGoToMarketplace, assignNearestDriver } from "@/lib/dsa";
+import { calcWebQuote, geocodeAddress } from "@/lib/web-quote";
 
 /**
  * Convert a YYYY-MM-DDTHH:mm local string (meant to represent UK time) 
@@ -34,29 +35,8 @@ function parseUKTime(datetimeLocalValue: string | null): string | null {
   return new Date(realUtcTime).toISOString();
 }
 
-/**
- * Geocode an address to lat/lon using Nominatim (OpenStreetMap).
- * Falls back to UK-general placeholder coordinates if geocoding fails.
- */
-async function geocodeAddress(address: string): Promise<{ lat: number; lon: number }> {
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&countrycodes=gb`,
-      { headers: { 'User-Agent': 'UTO-Admin-Panel/1.0' } }
-    );
-    const data = await res.json();
-    if (data && data.length > 0) {
-      return {
-        lat: parseFloat(data[0].lat),
-        lon: parseFloat(data[0].lon),
-      };
-    }
-  } catch (err) {
-    console.error("[Geocode] Failed for address:", address, err);
-  }
-  // Fallback to London centre as placeholder
-  return { lat: 51.5074, lon: -0.1278 };
-}
+/** Blocking message shown when the fare table has no rule / pricing fails. */
+export const PRICING_UNAVAILABLE = "Pricing unavailable — contact dispatch";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function createWebBooking(data: any) {
@@ -105,13 +85,36 @@ export async function createWebBooking(data: any) {
       geocodeAddress(data.dropoffAddress),
     ]);
 
-    // 3. Determine dispatch mode: marketplace or direct driver assignment
+    // 3. Price the trip from the service-area fare table. The fare shown in the
+    //    form is only a preview — this server-side quote is the authoritative
+    //    price that is stored and cross-posted, so a client-supplied price is
+    //    never accepted. A missing pricing rule / quote failure blocks the
+    //    booking so no priced-but-unpriced ride can slip through.
+    const quote = await calcWebQuote({
+      pickup: { lat: pickupGeo.lat, lng: pickupGeo.lon },
+      dropoff: { lat: dropoffGeo.lat, lng: dropoffGeo.lon },
+      vehicleType: data.vehicleType || 'economy',
+    });
+    if (!quote.success) {
+      return { success: false, error: PRICING_UNAVAILABLE };
+    }
+
+    // Commission / driver cut mirror the client's 15% standard when auto-calculated.
+    const autoCommission = data.commissionCalculation === 'Calculate automatically';
+    const commissionAmount = autoCommission
+      ? Number((quote.price * 0.15).toFixed(2))
+      : Number(data.commission) || 0;
+    const driverCut = autoCommission
+      ? Number((quote.price - commissionAmount).toFixed(2))
+      : Number(data.driverCut) || 0;
+
+    // 4. Determine dispatch mode: marketplace or direct driver assignment
     const scheduledTime = parseUKTime(data.time);
     const goToMarketplace = await shouldGoToMarketplace(scheduledTime);
 
-    // 4. Generate Reference & Insert into web_booker table
+    // 5. Generate Reference & Insert into web_booker table
     const reference = Math.random().toString(36).substring(2, 8).toUpperCase();
-    
+
     const initialStatus = goToMarketplace ? 'marketplace' : 'searching_driver';
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -126,18 +129,18 @@ export async function createWebBooking(data: any) {
       dropoff_address: data.dropoffAddress,
       dropoff_latitude: dropoffGeo.lat,
       dropoff_longitude: dropoffGeo.lon,
-      estimated_price: data.price || 0,
+      estimated_price: quote.price,
       scheduled_time: scheduledTime || null,
       pricing_type: data.pricingType || "Fixed price",
       payment_method: data.paymentMethod || "pay",
       commission_calculation: data.commissionCalculation || "Calculate automatically",
-      commission_amount: data.commission || 0,
-      driver_cut: data.driverCut || 0,
+      commission_amount: commissionAmount,
+      driver_cut: driverCut,
       flight_number: data.flightNumber || null,
       booking_note: data.bookingNote || null,
       dispatch_mode: goToMarketplace ? 'marketplace' : 'dsa_direct',
-      dispatch_note: goToMarketplace 
-        ? 'Booking is 4+ hours away. Placed in marketplace for drivers to accept.' 
+      dispatch_note: goToMarketplace
+        ? 'Booking is 4+ hours away. Placed in marketplace for drivers to accept.'
         : 'Booking within 4 hours. Searching for nearest available driver...',
     };
 
@@ -149,7 +152,7 @@ export async function createWebBooking(data: any) {
 
     if (bookingError) throw new Error("Failed to create web booking: " + bookingError.message);
 
-    // 5. If NOT marketplace → run DSA to find and assign nearest driver
+    // 6. If NOT marketplace → run DSA to find and assign nearest driver
     let assignedDriver = null;
     if (!goToMarketplace) {
       assignedDriver = await assignNearestDriver(
@@ -160,14 +163,14 @@ export async function createWebBooking(data: any) {
       );
     }
 
-    // 6. Re-fetch the booking to get the latest status after DSA assignment
+    // 7. Re-fetch the booking to get the latest status after DSA assignment
     const { data: finalBooking } = await supabaseAdmin
       .from('web_booker')
       .select()
       .eq('id', newBooking.id)
       .single();
 
-    // 7. CROSS-POST to the central utoreplit Express Server API
+    // 8. CROSS-POST to the central utoreplit Express Server API
     // This allows the actual rider/driver app to natively pick up this trip,
     // dispatching via real sockets if < 4h, or dropping it in later_bookings if > 4h.
     try {
@@ -181,7 +184,7 @@ export async function createWebBooking(data: any) {
         dropoffLongitude: dropoffGeo.lon,
         pickupAt: scheduledTime || new Date(Date.now() + 60000).toISOString(), // Fallback to +1 minute to bypass future validation
         dropoffBy: new Date(new Date(scheduledTime || Date.now()).getTime() + 30 * 60000).toISOString(),
-        estimatedPrice: data.price || 0,
+        estimatedPrice: quote.price,
         vehicleType: data.vehicleType || 'economy'
       };
       
@@ -209,6 +212,55 @@ export async function createWebBooking(data: any) {
   } catch (error: unknown) {
     console.error("Error creating web booking:", error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Quote the trip from the service-area fare table once pickup + dropoff are
+ * entered, so the form can show the live fare (read-only) before submission.
+ * The price shown here is only a preview; createWebBooking re-quotes on the
+ * server so the stored/cross-posted price is always authoritative.
+ */
+export async function quoteForWebBooking(
+  pickupAddress: string,
+  dropoffAddress: string,
+  vehicleType?: string | null
+): Promise<
+  | { success: true; quote: { price: number; billed_miles: number; route_label: string; vehicle: string } }
+  | { success: false; error: string }
+> {
+  const pickup = pickupAddress?.trim();
+  const dropoff = dropoffAddress?.trim();
+  if (!pickup || !dropoff) {
+    return { success: false, error: 'Enter pickup and dropoff addresses to see a price.' };
+  }
+
+  try {
+    const [pickupGeo, dropoffGeo] = await Promise.all([
+      geocodeAddress(pickup),
+      geocodeAddress(dropoff),
+    ]);
+
+    const result = await calcWebQuote({
+      pickup: { lat: pickupGeo.lat, lng: pickupGeo.lon },
+      dropoff: { lat: dropoffGeo.lat, lng: dropoffGeo.lon },
+      vehicleType: vehicleType ?? null,
+    });
+
+    if (!result.success) return { success: false, error: PRICING_UNAVAILABLE };
+
+    return {
+      success: true,
+      quote: {
+        price: result.price,
+        billed_miles: result.billed_miles,
+        route_label: result.route_label,
+        vehicle: result.vehicle,
+      },
+    };
+  } catch (err) {
+    console.error("[WebBooker Quote] failed:", err);
+    return { success: false, error: PRICING_UNAVAILABLE };
   }
 }
 

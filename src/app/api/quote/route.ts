@@ -1,16 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServiceAreas } from '@/app/service-areas/actions';
-import { getPricingRules } from '@/app/settings/actions';
-import {
-  billedRoute,
-  calculateFareFromRule,
-  describeRouteMode,
-  findBaseServiceArea,
-  findMainPricingRule,
-  findServiceAreaPricingRule,
-  metersToMiles,
-  type LatLng,
-} from '@/lib/pricing';
+import { calcWebQuote, type LatLng } from '@/lib/web-quote';
 
 function asLatLng(lat: unknown, lng: unknown): LatLng | null {
   const latitude = parseFloat(String(lat));
@@ -32,65 +21,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const [areas, pricingRules] = await Promise.all([
-      getServiceAreas(),
-      getPricingRules(),
-    ]);
+    const result = await calcWebQuote({
+      pickup,
+      dropoff,
+      minutes: parseFloat(String(body.minutes ?? body.duration_minutes ?? 0)) || 0,
+      vehicleType: body.vehicle_type || body.vehicleType,
+    });
 
-    const baseArea = findBaseServiceArea(areas);
-    const center = baseArea?.coordinates?.[0]
-      ? { lat: baseArea.coordinates[0][0], lng: baseArea.coordinates[0][1] }
-      : null;
-    const radiusMiles = baseArea?.radius_meters ? metersToMiles(baseArea.radius_meters) : 0;
-
-    const route = billedRoute({ pickup, dropoff, center, radiusMiles });
-    const serviceAreaRule = findServiceAreaPricingRule(pricingRules);
-    const mainRule = findMainPricingRule(pricingRules);
-    const rule = route.mode === 'inside_pickup_dropoff'
-      ? (serviceAreaRule || mainRule)
-      : (mainRule || serviceAreaRule);
-
-    if (!rule) {
+    if (!result.success) {
       return NextResponse.json(
-        { error: 'No pricing rule configured' },
-        { status: 404 }
+        { error: result.code === 404 ? 'No pricing rule configured' : result.error },
+        { status: result.code }
       );
     }
 
-    const fare = calculateFareFromRule({
-      miles: route.miles,
-      minutes: parseFloat(String(body.minutes ?? body.duration_minutes ?? 0)) || 0,
-      vehicleType: body.vehicle_type || body.vehicleType,
-      vehicles: (rule.vehicles || {}) as Record<string, unknown>,
-      mileTiers: rule.mile_tiers || [],
-      minuteTiers: rule.minute_tiers || [],
-    });
-
-    return NextResponse.json({
-      success: true,
-      price: fare.price,
-      billed_miles: Math.round(route.miles * 100) / 100,
-      route_mode: route.mode,
-      route_label: describeRouteMode(route.mode),
-      legs: route.legs.map((leg) => ({
-        ...leg,
-        miles: Math.round(leg.miles * 100) / 100,
-      })),
-      vehicle: fare.vehicle,
-      breakdown: {
-        start: fare.start,
-        mileage: fare.mileage,
-        time: fare.time,
-      },
-      base: center && radiusMiles > 0
-        ? {
-            name: baseArea?.name,
-            latitude: center.lat,
-            longitude: center.lng,
-            radius_miles: Math.round(radiusMiles * 100) / 100,
-          }
-        : null,
-    });
+    return NextResponse.json(result);
   } catch (err) {
     console.error('[quote] failed:', err);
     return NextResponse.json({ error: 'Failed to calculate quote' }, { status: 500 });

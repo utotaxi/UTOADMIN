@@ -63,6 +63,20 @@ export function findServiceAreaPricingRule<T extends { rule_type?: string }>(rul
   return rules.find((r) => isServiceAreaPricingRule(r)) || null;
 }
 
+// The pricing rule linked to a specific service area. Falls back to a legacy
+// service-area rule that was saved before rules were linked to areas.
+export function findPricingRuleForServiceArea<
+  T extends { rule_type?: string; service_area_id?: string | null }
+>(rules: T[], serviceAreaId?: string | null): T | null {
+  if (serviceAreaId) {
+    const linked = rules.find(
+      (r) => isServiceAreaPricingRule(r) && r.service_area_id === serviceAreaId
+    );
+    if (linked) return linked;
+  }
+  return rules.find((r) => isServiceAreaPricingRule(r) && !r.service_area_id) || null;
+}
+
 export function buildVehiclePricing(source?: Partial<VehiclePricing> | Record<string, unknown> | null): VehiclePricing {
   const dv = source || {};
   const mileTiers = (dv as VehiclePricing).mile_tier_prices || {};

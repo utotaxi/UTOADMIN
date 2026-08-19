@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { createWebBooking, fetchAllDriversForWebBooker, manualAssignDriverToWebBooking } from './actions';
+import { createWebBooking, fetchAllDriversForWebBooker, manualAssignDriverToWebBooking, quoteForWebBooking } from './actions';
 import { MapPin, Clock, User, CreditCard, ChevronDown, CheckCircle, Calculator, FileText, Store, Radio, Car, AlertTriangle, UserPlus, Search, Circle, ToggleLeft, ToggleRight } from 'lucide-react';
 
 function AutocompleteInput({ value, onChange, placeholder, className, isPickup }: { value: string, onChange: (v: string) => void, placeholder: string, className?: string, isPickup?: boolean }) {
@@ -115,7 +115,7 @@ export default function WebBookerClient() {
     vehicleType: 'Saloon',
     pricingType: 'Fixed price',
     paymentMethod: 'pay',
-    price: 70,
+    price: 0,
     commissionCalculation: 'Calculate automatically',
     commission: 0,
     driverCut: 0,
@@ -135,6 +135,12 @@ export default function WebBookerClient() {
       plate: string;
     } | null;
   } | null>(null);
+
+  // Live fare preview state (fetched from the service-area fare table)
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteLabel, setQuoteLabel] = useState<string | null>(null);
+  const [quoteMiles, setQuoteMiles] = useState<number | null>(null);
 
   // Manual assign state
   const [manualAssign, setManualAssign] = useState(false);
@@ -167,6 +173,43 @@ export default function WebBookerClient() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Live fare from the service-area fare table: fetch once pickup + dropoff are
+  // entered, before booking submission. The price is read-only; if pricing is
+  // unavailable the submission is blocked rather than letting a ride through
+  // unpriced.
+  useEffect(() => {
+    const pickup = (formData.pickupAddress || '').trim();
+    const dropoff = (formData.dropoffAddress || '').trim();
+    if (!pickup || !dropoff) {
+      setQuoteLoading(false);
+      setQuoteError(null);
+      setQuoteLabel(null);
+      setQuoteMiles(null);
+      setFormData((prev) => ({ ...prev, price: 0 }));
+      return;
+    }
+
+    setQuoteLoading(true);
+    setQuoteError(null);
+    const timer = setTimeout(async () => {
+      const res = await quoteForWebBooking(pickup, dropoff, formData.vehicleType);
+      if (res.success) {
+        setQuoteLabel(res.quote.route_label);
+        setQuoteMiles(res.quote.billed_miles);
+        setQuoteError(null);
+        setFormData((prev) => ({ ...prev, price: res.quote.price }));
+      } else {
+        setQuoteLabel(null);
+        setQuoteMiles(null);
+        setQuoteError(res.error);
+        setFormData((prev) => ({ ...prev, price: 0 }));
+      }
+      setQuoteLoading(false);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [formData.pickupAddress, formData.dropoffAddress, formData.vehicleType]);
+
   const filteredDrivers = drivers.filter(d =>
     d.name.toLowerCase().includes(driverSearch.toLowerCase()) ||
     d.vehicle.toLowerCase().includes(driverSearch.toLowerCase()) ||
@@ -180,7 +223,20 @@ export default function WebBookerClient() {
       alert('Please select a driver for manual assignment.');
       return;
     }
-    
+
+    if (quoteLoading) {
+      alert('Please wait for the fare to finish calculating before saving.');
+      return;
+    }
+    if (quoteError) {
+      alert(quoteError);
+      return;
+    }
+    if (!(formData.price > 0)) {
+      alert('Pricing unavailable — contact dispatch.');
+      return;
+    }
+
     setLoading(true);
     const res = await createWebBooking(formData);
     
@@ -240,7 +296,7 @@ export default function WebBookerClient() {
       vehicleType: 'Saloon',
       pricingType: 'Fixed price',
       paymentMethod: 'pay',
-      price: 70,
+      price: 0,
       commissionCalculation: 'Calculate automatically',
       commission: 0,
       driverCut: 0,
@@ -518,9 +574,22 @@ export default function WebBookerClient() {
                     <label className="text-[10px] text-slate-500 absolute -top-2 left-2 bg-[#fdfdfd] dark:bg-card px-1 z-10 text-primary">Price *</label>
                     <div className="border-b-2 border-primary flex items-center px-1">
                       <span className="text-sm text-slate-600">£</span>
-                      <input type="number" required className="p-2 pl-2 w-full outline-none focus:border-primary bg-transparent text-sm"
-                        value={formData.price} onChange={e => setFormData({...formData, price: Number(e.target.value)})} />
+                      <input type="number" required readOnly aria-label="Price"
+                        className="p-2 pl-2 w-full outline-none focus:border-primary bg-transparent text-sm disabled:cursor-not-allowed disabled:opacity-75"
+                        value={formData.price} title="Fare is calculated automatically from the service-area fare table" />
                     </div>
+                    {quoteLoading && (
+                      <p className="text-[10px] text-slate-400">Calculating fare…</p>
+                    )}
+                    {!quoteLoading && quoteLabel && (
+                      <p className="text-[10px] text-slate-500">
+                        {quoteLabel}
+                        {quoteMiles != null ? ` · ${quoteMiles} miles` : ''}
+                      </p>
+                    )}
+                    {quoteError && (
+                      <p className="text-[10px] text-red-500">{quoteError}</p>
+                    )}
                   </div>
                 </div>
              </div>
@@ -587,12 +656,12 @@ export default function WebBookerClient() {
           </div>
 
           <div className="flex justify-end pt-4">
-            <button 
-              type="submit" 
-              disabled={loading}
+            <button
+              type="submit"
+              disabled={loading || quoteLoading || !!quoteError}
               className="bg-[#0ea5e9] text-white px-8 py-2 rounded font-medium hover:bg-[#0284c7] transition-colors disabled:opacity-50 text-sm shadow-md"
             >
-              {loading ? "Dispatching..." : "Save"}
+              {loading ? "Dispatching..." : quoteError ? "Pricing unavailable" : quoteLoading ? "Calculating…" : "Save"}
             </button>
           </div>
         </form>
