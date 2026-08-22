@@ -188,7 +188,7 @@ export default function ServiceAreaPricingPanel({
   };
 
   return (
-    <div className="mt-10 pt-8 border-t border-slate-200">
+    <div className="pt-6">
       <h3 className="text-[18px] font-bold text-slate-800 tracking-tight">{copy.title}</h3>
       <p className="text-[13px] text-slate-500 mt-1 mb-6 max-w-3xl leading-relaxed">
         {copy.description}

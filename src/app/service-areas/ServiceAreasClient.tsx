@@ -39,6 +39,7 @@ const BOOKING_POLICIES = [
 ];
 
 type TabType = 'service-area' | 'areas' | 'locations';
+type PricingView = 'inside' | 'base_route';
 
 interface ServiceAreasClientProps {
   initialAreas: ServiceArea[];
@@ -78,6 +79,7 @@ export default function ServiceAreasClient({
     serviceAreaId ?? findBaseServiceArea(initialAreas)?.id ?? null
   );
   const [activeTab, setActiveTab] = useState<TabType>('service-area');
+  const [pricingView, setPricingView] = useState<PricingView>('inside');
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Global styling
@@ -555,9 +557,9 @@ export default function ServiceAreasClient({
   const filteredAreas = areas.filter((a) => a.area_type === 'polygon' || a.description?.includes('Policy'));
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#f1f5f9] -m-4 sm:-m-8 p-4 sm:p-8 font-sans">
+    <div className="flex flex-col bg-[#f1f5f9] -m-4 sm:-m-8 p-4 sm:p-8 font-sans pb-28">
       {/* Main Content Card */}
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 flex-1 flex flex-col mb-16 relative">
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 flex flex-col mb-8 relative overflow-visible">
         {/* Tabs Bar */}
         <div className="flex items-center gap-6 px-6 pt-4 border-b border-slate-200">
           <button
@@ -603,18 +605,18 @@ export default function ServiceAreasClient({
           </button>
         </div>
 
-        <div className="p-6 flex-1 flex flex-col">
+        <div className="p-6 flex flex-col">
           {/* TAB: Service Area */}
           {activeTab === 'service-area' && (
-            <div className="flex-1 flex flex-col">
+            <div className="flex flex-col">
               <h2 className="text-[22px] font-bold text-slate-800 tracking-tight">Your service area</h2>
               <p className="text-[13px] text-slate-500 mb-4">
                 You can setup your service area and use this to limit booking outside of your active service area
               </p>
               <div className="mb-6 rounded-lg border border-sky-100 bg-sky-50 px-4 py-3 text-[13px] text-slate-700 leading-relaxed max-w-3xl">
                 This blue circle is the <span className="font-semibold">base</span>. The radius can be any value (5, 7, 9 miles, and so on).
-                The first table is for jobs fully inside the circle (pickup + drop-off).
-                The second table is <span className="font-semibold">base + pickup + drop-off</span> with the radius as free deadhead:
+                Use <button type="button" onClick={() => { setPricingView('inside'); document.getElementById('service-area-pricing')?.scrollIntoView({ behavior: 'smooth' }); }} className="font-semibold text-[#0ea5e9] underline underline-offset-2">Table 1</button> for jobs fully inside the circle (pickup + drop-off).
+                Use <button type="button" onClick={() => { setPricingView('base_route'); document.getElementById('service-area-pricing')?.scrollIntoView({ behavior: 'smooth' }); }} className="font-semibold text-[#0ea5e9] underline underline-offset-2">Table 2</button> for <span className="font-semibold">base + pickup + drop-off</span> with the radius as free deadhead:
                 2 miles to pickup + 5 miles pickup to drop = 7 miles, and 7 is under a 9-mile area, so that trip is £0.
                 Miles beyond the radius are charged (for example 16 raw miles − 9 free = 7 billed miles).
               </div>
@@ -683,46 +685,79 @@ export default function ServiceAreasClient({
                 </div>
               )}
 
-              <div className="flex-1 border border-slate-200 mt-2 relative" style={{ minHeight: '450px' }}>
+              <div className="border border-slate-200 mt-2 relative h-[450px] shrink-0">
                 <div ref={mapContainerRef} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }} />
                 <button className="absolute top-2 right-2 bg-white p-1.5 rounded shadow border border-slate-200 text-slate-700 hover:bg-slate-50" style={{ zIndex: 1000 }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" /></svg>
                 </button>
               </div>
 
-              <ServiceAreaPricingPanel
-                kind="inside"
-                initialPricingRule={initialPricingRule}
-                serviceAreaId={baseAreaId}
-                baseAddress={searchLocation}
-                onToast={showToast}
-                onBeforeSave={async () => {
-                  const miles = parseFloat(radiusInput);
-                  if (!isNaN(miles) && miles > 0) {
-                    setSelectedRadius(milesToMeters(miles));
-                    const result = await persistBaseCircle(miles);
-                    if (result.success && result.data) return result.data.id;
-                  }
-                  return baseAreaId;
-                }}
-              />
+              <div id="service-area-pricing" className="mt-10">
+                <div className="flex items-center gap-6 border-b border-slate-200 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setPricingView('inside')}
+                    className={cn(
+                      'pb-3 text-[14px] font-semibold transition-colors relative',
+                      pricingView === 'inside' ? 'text-[#0ea5e9]' : 'text-slate-500 hover:text-slate-800'
+                    )}
+                  >
+                    Table 1 · Inside circle
+                    {pricingView === 'inside' && (
+                      <div className="absolute bottom-[-1px] left-0 right-0 h-[2px] bg-[#0ea5e9]" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPricingView('base_route')}
+                    className={cn(
+                      'pb-3 text-[14px] font-semibold transition-colors relative',
+                      pricingView === 'base_route' ? 'text-[#0ea5e9]' : 'text-slate-500 hover:text-slate-800'
+                    )}
+                  >
+                    Table 2 · Base + pickup + drop-off
+                    {pricingView === 'base_route' && (
+                      <div className="absolute bottom-[-1px] left-0 right-0 h-[2px] bg-[#0ea5e9]" />
+                    )}
+                  </button>
+                </div>
 
-              <ServiceAreaPricingPanel
-                kind="base_route"
-                initialPricingRule={initialBaseRoutePricing}
-                serviceAreaId={baseAreaId}
-                baseAddress={searchLocation}
-                onToast={showToast}
-                onBeforeSave={async () => {
-                  const miles = parseFloat(radiusInput);
-                  if (!isNaN(miles) && miles > 0) {
-                    setSelectedRadius(milesToMeters(miles));
-                    const result = await persistBaseCircle(miles);
-                    if (result.success && result.data) return result.data.id;
-                  }
-                  return baseAreaId;
-                }}
-              />
+                {pricingView === 'inside' ? (
+                  <ServiceAreaPricingPanel
+                    kind="inside"
+                    initialPricingRule={initialPricingRule}
+                    serviceAreaId={baseAreaId}
+                    baseAddress={searchLocation}
+                    onToast={showToast}
+                    onBeforeSave={async () => {
+                      const miles = parseFloat(radiusInput);
+                      if (!isNaN(miles) && miles > 0) {
+                        setSelectedRadius(milesToMeters(miles));
+                        const result = await persistBaseCircle(miles);
+                        if (result.success && result.data) return result.data.id;
+                      }
+                      return baseAreaId;
+                    }}
+                  />
+                ) : (
+                  <ServiceAreaPricingPanel
+                    kind="base_route"
+                    initialPricingRule={initialBaseRoutePricing}
+                    serviceAreaId={baseAreaId}
+                    baseAddress={searchLocation}
+                    onToast={showToast}
+                    onBeforeSave={async () => {
+                      const miles = parseFloat(radiusInput);
+                      if (!isNaN(miles) && miles > 0) {
+                        setSelectedRadius(milesToMeters(miles));
+                        const result = await persistBaseCircle(miles);
+                        if (result.success && result.data) return result.data.id;
+                      }
+                      return baseAreaId;
+                    }}
+                  />
+                )}
+              </div>
             </div>
           )}
 
