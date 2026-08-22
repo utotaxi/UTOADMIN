@@ -20,23 +20,35 @@ export async function getPricingRules() {
 }
 
 export async function savePricingRule(rule: any) {
-  const { 
-    id, rule_name, rule_type, rule_priority, is_shuttle, when_applied, 
-    fixed_calculation, base_address, pickup_area, dropoff_area, 
-    apply_web_booker, apply_dispatch_panel, vehicles, mile_tiers, minute_tiers 
+  const {
+    id, service_area_id, rule_name, rule_type, rule_priority, is_shuttle, when_applied,
+    fixed_calculation, base_address, pickup_area, dropoff_area,
+    apply_web_booker, apply_dispatch_panel, vehicles, mile_tiers, minute_tiers
   } = rule;
-  
-  const updates = { 
-    rule_name, rule_type, rule_priority, is_shuttle, when_applied, 
-    fixed_calculation, base_address, pickup_area, dropoff_area, 
-    apply_web_booker, apply_dispatch_panel, vehicles, mile_tiers, minute_tiers 
+
+  const updates = {
+    service_area_id, rule_name, rule_type, rule_priority, is_shuttle, when_applied,
+    fixed_calculation, base_address, pickup_area, dropoff_area,
+    apply_web_booker, apply_dispatch_panel, vehicles, mile_tiers, minute_tiers
   };
-  
-  if (id) {
+
+  // One pricing rule per service area: if the caller didn't pass an id but
+  // did pass a service_area_id, update the existing rule for that area.
+  let ruleId = id;
+  if (!ruleId && service_area_id) {
+    const { data: existing } = await supabaseAdmin
+      .from('pricing_rules')
+      .select('id')
+      .eq('service_area_id', service_area_id)
+      .maybeSingle();
+    ruleId = existing?.id;
+  }
+
+  if (ruleId) {
     const { data, error } = await supabaseAdmin
       .from('pricing_rules')
       .update(updates)
-      .eq('id', id)
+      .eq('id', ruleId)
       .select()
       .single();
       

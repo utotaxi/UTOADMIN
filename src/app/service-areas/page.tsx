@@ -1,9 +1,10 @@
-import { getServiceAreas } from './actions';
+import { getServiceAreas, getServiceAreaBasePricing } from './actions';
 import { getPricingRules } from '@/app/settings/actions';
 import ServiceAreasClient from './ServiceAreasClient';
 import {
+  findBaseServiceArea,
   findMainPricingRule,
-  findServiceAreaPricingRule,
+  findPricingRuleForServiceArea,
 } from '@/lib/pricing';
 
 export const dynamic = 'force-dynamic';
@@ -19,18 +20,26 @@ export default async function ServiceAreasPage() {
     getPricingRules(),
   ]);
 
-  const serviceAreaRule = findServiceAreaPricingRule(pricingRules);
+  const baseArea = findBaseServiceArea(areas);
+  const baseRouteRows = await getServiceAreaBasePricing(baseArea?.id ?? null);
+  const serviceAreaRule = findPricingRuleForServiceArea(pricingRules, baseArea?.id);
   const mainRule = findMainPricingRule(pricingRules);
   const seedRule = serviceAreaRule
     ? serviceAreaRule
     : mainRule
-      ? { ...mainRule, id: undefined, rule_name: 'Service Area', rule_type: 'Service area' }
+      ? { ...mainRule, id: undefined, service_area_id: undefined, rule_name: 'Service Area', rule_type: 'Service area' }
       : null;
+  const seedBaseRouteRule = baseRouteRows[0]
+    || (seedRule
+      ? { ...seedRule, id: undefined, rule_name: 'Base + pickup + drop-off' }
+      : null);
 
   return (
     <ServiceAreasClient
       initialAreas={areas}
       initialPricingRule={seedRule}
+      initialBaseRoutePricing={seedBaseRouteRule}
+      serviceAreaId={baseArea?.id ?? null}
     />
   );
 }

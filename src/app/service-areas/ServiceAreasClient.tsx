@@ -43,6 +43,8 @@ type TabType = 'service-area' | 'areas' | 'locations';
 interface ServiceAreasClientProps {
   initialAreas: ServiceArea[];
   initialPricingRule?: Record<string, unknown> | null;
+  initialBaseRoutePricing?: Record<string, unknown> | null;
+  serviceAreaId?: string | null;
 }
 
 function getInitialBaseCircle(areas: ServiceArea[]) {
@@ -58,13 +60,23 @@ function getInitialBaseCircle(areas: ServiceArea[]) {
   };
 }
 
-export default function ServiceAreasClient({ initialAreas, initialPricingRule = null }: ServiceAreasClientProps) {
+export default function ServiceAreasClient({
+  initialAreas,
+  initialPricingRule = null,
+  initialBaseRoutePricing = null,
+  serviceAreaId = null,
+}: ServiceAreasClientProps) {
   const mapRef = useRef<any>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const detailMapRef = useRef<any>(null);
   const detailMapContainerRef = useRef<HTMLDivElement>(null);
 
   const [areas, setAreas] = useState<ServiceArea[]>(initialAreas);
+
+  // Base circle's id — pricing rules are linked to this service area
+  const [baseAreaId, setBaseAreaId] = useState<string | null>(
+    serviceAreaId ?? findBaseServiceArea(initialAreas)?.id ?? null
+  );
   const [activeTab, setActiveTab] = useState<TabType>('service-area');
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -320,6 +332,7 @@ export default function ServiceAreasClient({ initialAreas, initialPricingRule = 
       limit_enabled: limitServiceArea,
     });
     if (result.success && result.data) {
+      setBaseAreaId(result.data.id);
       setAreas((prev) => {
         const without = prev.filter((a) => a.id !== result.data!.id);
         return [result.data as ServiceArea, ...without];
@@ -599,9 +612,11 @@ export default function ServiceAreasClient({ initialAreas, initialPricingRule = 
                 You can setup your service area and use this to limit booking outside of your active service area
               </p>
               <div className="mb-6 rounded-lg border border-sky-100 bg-sky-50 px-4 py-3 text-[13px] text-slate-700 leading-relaxed max-w-3xl">
-                This blue circle is treated as the <span className="font-semibold">base</span>. The radius can be any value (5 miles, 7 miles, and so on).
-                If pickup and drop-off are both inside the circle, the fare is <span className="font-semibold">pickup + drop-off</span>.
-                If either point is outside the circle, the fare is <span className="font-semibold">base + pickup + drop-off</span>.
+                This blue circle is the <span className="font-semibold">base</span>. The radius can be any value (5, 7, 9 miles, and so on).
+                The first table is for jobs fully inside the circle (pickup + drop-off).
+                The second table is <span className="font-semibold">base + pickup + drop-off</span> with the radius as free deadhead:
+                2 miles to pickup + 5 miles pickup to drop = 7 miles, and 7 is under a 9-mile area, so that trip is £0.
+                Miles beyond the radius are charged (for example 16 raw miles − 9 free = 7 billed miles).
               </div>
 
               <label className="flex items-center gap-2 mb-6 cursor-pointer w-fit">
@@ -676,15 +691,36 @@ export default function ServiceAreasClient({ initialAreas, initialPricingRule = 
               </div>
 
               <ServiceAreaPricingPanel
+                kind="inside"
                 initialPricingRule={initialPricingRule}
+                serviceAreaId={baseAreaId}
                 baseAddress={searchLocation}
                 onToast={showToast}
                 onBeforeSave={async () => {
                   const miles = parseFloat(radiusInput);
                   if (!isNaN(miles) && miles > 0) {
                     setSelectedRadius(milesToMeters(miles));
-                    await persistBaseCircle(miles);
+                    const result = await persistBaseCircle(miles);
+                    if (result.success && result.data) return result.data.id;
                   }
+                  return baseAreaId;
+                }}
+              />
+
+              <ServiceAreaPricingPanel
+                kind="base_route"
+                initialPricingRule={initialBaseRoutePricing}
+                serviceAreaId={baseAreaId}
+                baseAddress={searchLocation}
+                onToast={showToast}
+                onBeforeSave={async () => {
+                  const miles = parseFloat(radiusInput);
+                  if (!isNaN(miles) && miles > 0) {
+                    setSelectedRadius(milesToMeters(miles));
+                    const result = await persistBaseCircle(miles);
+                    if (result.success && result.data) return result.data.id;
+                  }
+                  return baseAreaId;
                 }}
               />
             </div>

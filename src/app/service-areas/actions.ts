@@ -147,3 +147,78 @@ export async function saveBaseServiceArea(input: {
     color: payload.color,
   });
 }
+
+export async function getServiceAreaBasePricing(serviceAreaId?: string | null) {
+  let query = supabaseAdmin
+    .from('service_area_base_pricing')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (serviceAreaId) {
+    query = query.eq('service_area_id', serviceAreaId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error('Error fetching service_area_base_pricing:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function saveServiceAreaBasePricing(rule: {
+  id?: string;
+  service_area_id?: string | null;
+  rule_name?: string;
+  vehicles: unknown;
+  mile_tiers: unknown;
+  minute_tiers: unknown;
+  apply_web_booker?: boolean;
+  apply_dispatch_panel?: boolean;
+}): Promise<{ success: boolean; error?: string; data?: Record<string, unknown> }> {
+  const updates = {
+    service_area_id: rule.service_area_id || null,
+    rule_name: rule.rule_name || 'Base + pickup + drop-off',
+    calculation: 'base_pickup_dropoff',
+    vehicles: rule.vehicles,
+    mile_tiers: rule.mile_tiers,
+    minute_tiers: rule.minute_tiers,
+    apply_web_booker: rule.apply_web_booker ?? true,
+    apply_dispatch_panel: rule.apply_dispatch_panel ?? true,
+  };
+
+  let ruleId = rule.id;
+  if (!ruleId && rule.service_area_id) {
+    const { data: existing } = await supabaseAdmin
+      .from('service_area_base_pricing')
+      .select('id')
+      .eq('service_area_id', rule.service_area_id)
+      .maybeSingle();
+    ruleId = existing?.id;
+  }
+
+  if (ruleId) {
+    const { data, error } = await supabaseAdmin
+      .from('service_area_base_pricing')
+      .update(updates)
+      .eq('id', ruleId)
+      .select()
+      .single();
+
+    if (error) return { success: false, error: error.message };
+    revalidatePath('/service-areas');
+    return { success: true, data };
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('service_area_base_pricing')
+    .insert(updates)
+    .select()
+    .single();
+
+  if (error) return { success: false, error: error.message };
+  revalidatePath('/service-areas');
+  return { success: true, data };
+}

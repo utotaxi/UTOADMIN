@@ -1,4 +1,4 @@
-import { getServiceAreas } from '@/app/service-areas/actions';
+import { getServiceAreas, getServiceAreaBasePricing } from '@/app/service-areas/actions';
 import { getPricingRules } from '@/app/settings/actions';
 import {
   billedRoute,
@@ -8,11 +8,14 @@ import {
   findMainPricingRule,
   findPricingRuleForServiceArea,
   metersToMiles,
+  resolveVehicleName,
   type LatLng,
   type RouteLeg,
   type RouteMode,
   type VehicleTypeName,
 } from '@/lib/pricing';
+
+export type { LatLng };
 
 export interface WebQuoteBase {
   name: string | undefined;
@@ -25,6 +28,8 @@ export interface WebQuoteSuccess {
   success: true;
   price: number;
   billed_miles: number;
+  raw_miles: number;
+  free_miles: number;
   route_mode: RouteMode;
   route_label: string;
   vehicle: VehicleTypeName;
@@ -42,13 +47,17 @@ export interface WebQuoteFailure {
 export type WebQuoteResult = WebQuoteSuccess | WebQuoteFailure;
 
 /**
- * Price a ride from the service-area fare table.
+ * Price a ride from the two service-area fare tables.
  *
- * Policy: if both pickup and drop-off fall inside the base service-area circle,
- * the fare covers pickup → drop-off only. If either point is outside, the dead
- * mileage from the base to the pickup is included (base → pickup → drop-off).
- * This is the single source of truth for the web-booker form, the /api/quote
- * endpoint, and booking creation — the same price is always returned.
+ * Table 1 (`pricing_rules`, rule_type = Service area):
+ *   both pickup and drop-off inside the circle → pickup → drop-off only
+ *
+ * Table 2 (`service_area_base_pricing`):
+ *   otherwise → base → pickup + pickup → drop-off, minus the circle radius
+ *   as free deadhead. Only miles beyond the radius are charged.
+ *   Example: 9-mile area, 2 miles to pickup + 5 miles pickup→drop = 7 raw miles
+ *   → 7 < 9 so billed miles = 0 and fare = £0.
+ *   If raw miles are 16, billed miles = 16 - 9 = 7.
  */
 export async function calcWebQuote(params: {
   pickup: LatLng;
@@ -77,15 +86,47 @@ export async function calcWebQuote(params: {
       radiusMiles,
     });
 
-    const serviceAreaRule = findPricingRuleForServiceArea(pricingRules, baseArea?.id);
+    const insideRule = findPricingRuleForServiceArea(pricingRules, baseArea?.id);
     const mainRule = findMainPricingRule(pricingRules);
+    const baseRouteRows = await getServiceAreaBasePricing(baseArea?.id ?? null);
+    const baseRouteRule = baseRouteRows[0] || null;
+
     const rule =
       route.mode === 'inside_pickup_dropoff'
-        ? serviceAreaRule || mainRule
-        : mainRule || serviceAreaRule;
+        ? insideRule || mainRule
+        : baseRouteRule || mainRule || insideRule;
 
     if (!rule) {
       return { success: false, code: 404, error: 'No pricing rule configured' };
+    }
+
+    const billedMiles = Math.round(route.miles * 100) / 100;
+    const rawMiles = Math.round(route.raw_miles * 100) / 100;
+    const freeMiles = Math.round(route.free_miles * 100) / 100;
+
+    // Entirely within the free deadhead allowance → no charge from this table
+    if (route.mode === 'outside_base_pickup_dropoff' && billedMiles <= 0) {
+      return {
+        success: true,
+        price: 0,
+        billed_miles: 0,
+        raw_miles: rawMiles,
+        free_miles: freeMiles,
+        route_mode: route.mode,
+        route_label: describeRouteMode(route.mode),
+        vehicle: resolveVehicleName(params.vehicleType ?? 'economy'),
+        breakdown: { start: 0, mileage: 0, time: 0 },
+        legs: route.legs.map((leg) => ({ ...leg, miles: Math.round(leg.miles * 100) / 100 })),
+        base:
+          center && radiusMiles > 0
+            ? {
+                name: baseArea?.name,
+                latitude: center.lat,
+                longitude: center.lng,
+                radius_miles: Math.round(radiusMiles * 100) / 100,
+              }
+            : null,
+      };
     }
 
     const fare = calculateFareFromRule({
@@ -93,14 +134,16 @@ export async function calcWebQuote(params: {
       minutes: params.minutes ?? 0,
       vehicleType: params.vehicleType ?? 'economy',
       vehicles: (rule.vehicles || {}) as Record<string, unknown>,
-      mileTiers: rule.mile_tiers || [],
-      minuteTiers: rule.minute_tiers || [],
+      mileTiers: (rule.mile_tiers || []) as { id: string; after_miles: string }[],
+      minuteTiers: (rule.minute_tiers || []) as { id: string; after_minutes: string }[],
     });
 
     return {
       success: true,
       price: fare.price,
-      billed_miles: Math.round(route.miles * 100) / 100,
+      billed_miles: billedMiles,
+      raw_miles: rawMiles,
+      free_miles: freeMiles,
       route_mode: route.mode,
       route_label: describeRouteMode(route.mode),
       vehicle: fare.vehicle,

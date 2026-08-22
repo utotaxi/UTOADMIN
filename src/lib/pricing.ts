@@ -2,13 +2,16 @@ export const VEHICLE_TYPES = ['Saloon', 'People Carrier', 'Minibus'] as const;
 export type VehicleTypeName = (typeof VEHICLE_TYPES)[number];
 
 export const SERVICE_AREA_RULE_TYPE = 'Service area';
+export const BASE_ROUTE_RULE_TYPE = 'Base + pickup + drop-off';
 export const BASE_SERVICE_AREA_MARKER = 'Role: Base';
 export const METERS_PER_MILE = 1609.34;
 
 export const INSIDE_CIRCLE_CALCULATION = 'Pickup Address → Drop-off Address';
 export const OUTSIDE_CIRCLE_CALCULATION = 'Base Address → Pickup Address → Drop-off Address';
 export const SERVICE_AREA_FIXED_CALCULATION =
-  'Inside service area: [Pickup Address] → [Drop-off Address]. Outside service area: [Base Address] → [Pickup Address] → [Drop-off Address] (circle treated as base).';
+  'Inside service area: [Pickup Address] → [Drop-off Address].';
+export const BASE_ROUTE_FIXED_CALCULATION =
+  'Base → Pickup → Drop-off, minus the service-area radius as free deadhead. Only miles beyond the radius are charged.';
 
 export type RouteMode = 'inside_pickup_dropoff' | 'outside_base_pickup_dropoff';
 
@@ -186,7 +189,7 @@ export function billedRoute(params: {
   dropoff: LatLng;
   center: LatLng | null;
   radiusMiles: number;
-}): { miles: number; mode: RouteMode; legs: RouteLeg[] } {
+}): { miles: number; raw_miles: number; free_miles: number; mode: RouteMode; legs: RouteLeg[] } {
   const { pickup, dropoff, center, radiusMiles } = params;
   const mode = resolveRouteMode(pickup, dropoff, center, radiusMiles);
   const pickupToDropoff = haversineMiles(pickup, dropoff);
@@ -194,14 +197,22 @@ export function billedRoute(params: {
   if (mode === 'inside_pickup_dropoff') {
     return {
       miles: pickupToDropoff,
+      raw_miles: pickupToDropoff,
+      free_miles: 0,
       mode,
       legs: [{ from: 'pickup', to: 'dropoff', miles: pickupToDropoff }],
     };
   }
 
   const baseToPickup = center ? haversineMiles(center, pickup) : 0;
+  const rawMiles = baseToPickup + pickupToDropoff;
+  const freeMiles = Math.max(0, radiusMiles);
+  const billedMiles = Math.max(0, rawMiles - freeMiles);
+
   return {
-    miles: baseToPickup + pickupToDropoff,
+    miles: billedMiles,
+    raw_miles: rawMiles,
+    free_miles: Math.min(freeMiles, rawMiles),
     mode,
     legs: [
       ...(center ? [{ from: 'base' as const, to: 'pickup' as const, miles: baseToPickup }] : []),
