@@ -14,6 +14,12 @@ export const metadata = {
   description: 'Manage serviceable zones for UTO ride sharing.',
 };
 
+function stripIds(rule: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!rule) return null;
+  const { id: _id, service_area_id: _areaId, ...rest } = rule;
+  return rest;
+}
+
 export default async function ServiceAreasPage() {
   const [areas, pricingRules] = await Promise.all([
     getServiceAreas(),
@@ -21,23 +27,17 @@ export default async function ServiceAreasPage() {
   ]);
 
   const baseArea = findBaseServiceArea(areas);
-  let baseRouteRows: Record<string, unknown>[] = [];
+  const serviceAreaRule = findPricingRuleForServiceArea(pricingRules, baseArea?.id);
+  const mainRule = findMainPricingRule(pricingRules);
+  const seedRule = (serviceAreaRule || stripIds(mainRule as Record<string, unknown> | null)) as Record<string, unknown> | null;
+
+  let seedBaseRouteRule: Record<string, unknown> | null = stripIds(seedRule);
   try {
-    baseRouteRows = await getServiceAreaBasePricing(baseArea?.id ?? null);
+    const baseRouteRows = await getServiceAreaBasePricing(baseArea?.id ?? null);
+    if (baseRouteRows[0]) seedBaseRouteRule = baseRouteRows[0] as Record<string, unknown>;
   } catch (err) {
     console.error('Failed to load service_area_base_pricing (table may not exist yet):', err);
   }
-  const serviceAreaRule = findPricingRuleForServiceArea(pricingRules, baseArea?.id);
-  const mainRule = findMainPricingRule(pricingRules);
-  const seedRule = serviceAreaRule
-    ? serviceAreaRule
-    : mainRule
-      ? { ...mainRule, id: undefined, service_area_id: undefined, rule_name: 'Service Area', rule_type: 'Service area' }
-      : null;
-  const seedBaseRouteRule = baseRouteRows[0]
-    || (seedRule
-      ? { ...seedRule, id: undefined, rule_name: 'Base + pickup + drop-off' }
-      : null);
 
   return (
     <ServiceAreasClient

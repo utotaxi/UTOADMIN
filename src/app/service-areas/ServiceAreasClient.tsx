@@ -17,6 +17,7 @@ import {
   parseBaseAreaDescription,
 } from '@/lib/pricing';
 import ServiceAreaPricingPanel from './ServiceAreaPricingPanel';
+import PanelErrorBoundary from '@/components/PanelErrorBoundary';
 
 let L: any;
 if (typeof window !== 'undefined') {
@@ -686,42 +687,46 @@ export default function ServiceAreasClient({
                   The circle radius is free deadhead. Example: 2 miles to pickup + 5 miles pickup to drop = 7 miles.
                   Inside a 9-mile area that is £0. Miles beyond the radius are charged.
                 </div>
-                <ServiceAreaPricingPanel
-                  kind="base_route"
-                  initialPricingRule={initialBaseRoutePricing}
-                  serviceAreaId={baseAreaId}
-                  baseAddress={searchLocation}
-                  onToast={showToast}
-                  onBeforeSave={async () => {
-                    const miles = parseFloat(radiusInput);
-                    if (!isNaN(miles) && miles > 0) {
-                      setSelectedRadius(milesToMeters(miles));
-                      const result = await persistBaseCircle(miles);
-                      if (result.success && result.data) return result.data.id;
-                    }
-                    return baseAreaId;
-                  }}
-                />
+                <PanelErrorBoundary fallback={<p className="text-sm text-red-600">Table 2 failed to load. Refresh the page.</p>}>
+                  <ServiceAreaPricingPanel
+                    kind="base_route"
+                    initialPricingRule={initialBaseRoutePricing}
+                    serviceAreaId={baseAreaId}
+                    baseAddress={searchLocation}
+                    onToast={showToast}
+                    onBeforeSave={async () => {
+                      const miles = parseFloat(radiusInput);
+                      if (!isNaN(miles) && miles > 0) {
+                        setSelectedRadius(milesToMeters(miles));
+                        const result = await persistBaseCircle(miles);
+                        if (result.success && result.data) return result.data.id;
+                      }
+                      return baseAreaId;
+                    }}
+                  />
+                </PanelErrorBoundary>
               </div>
 
               <div className="mt-6 rounded-lg border border-slate-200 p-5">
                 <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-[#0ea5e9]">Table 1 · Inside circle</div>
-                <ServiceAreaPricingPanel
-                  kind="inside"
-                  initialPricingRule={initialPricingRule}
-                  serviceAreaId={baseAreaId}
-                  baseAddress={searchLocation}
-                  onToast={showToast}
-                  onBeforeSave={async () => {
-                    const miles = parseFloat(radiusInput);
-                    if (!isNaN(miles) && miles > 0) {
-                      setSelectedRadius(milesToMeters(miles));
-                      const result = await persistBaseCircle(miles);
-                      if (result.success && result.data) return result.data.id;
-                    }
-                    return baseAreaId;
-                  }}
-                />
+                <PanelErrorBoundary fallback={<p className="text-sm text-red-600">Table 1 failed to load. Refresh the page.</p>}>
+                  <ServiceAreaPricingPanel
+                    kind="inside"
+                    initialPricingRule={initialPricingRule}
+                    serviceAreaId={baseAreaId}
+                    baseAddress={searchLocation}
+                    onToast={showToast}
+                    onBeforeSave={async () => {
+                      const miles = parseFloat(radiusInput);
+                      if (!isNaN(miles) && miles > 0) {
+                        setSelectedRadius(milesToMeters(miles));
+                        const result = await persistBaseCircle(miles);
+                        if (result.success && result.data) return result.data.id;
+                      }
+                      return baseAreaId;
+                    }}
+                  />
+                </PanelErrorBoundary>
               </div>
 
               <div className="border border-slate-200 mt-8 relative h-[380px] shrink-0">
