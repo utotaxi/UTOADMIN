@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Plus, Trash2, Search, CheckCircle2, AlertCircle, Map as MapIcon, MapPin, ChevronDown, Activity, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Search, CheckCircle2, AlertCircle, Map as MapIcon, MapPin, ChevronDown, Activity, ChevronLeft, ChevronRight, Loader2, CircleDollarSign } from 'lucide-react';
 import { ServiceArea } from '@/types';
 import {
   createServiceArea,
@@ -38,8 +38,7 @@ const BOOKING_POLICIES = [
   { label: 'Blocked', value: 'blocked' },
 ];
 
-type TabType = 'service-area' | 'areas' | 'locations';
-type PricingView = 'inside' | 'base_route';
+type TabType = 'service-area' | 'pricing' | 'areas' | 'locations';
 
 interface ServiceAreasClientProps {
   initialAreas: ServiceArea[];
@@ -79,7 +78,6 @@ export default function ServiceAreasClient({
     serviceAreaId ?? findBaseServiceArea(initialAreas)?.id ?? null
   );
   const [activeTab, setActiveTab] = useState<TabType>('service-area');
-  const [pricingView, setPricingView] = useState<PricingView>('inside');
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Global styling
@@ -575,6 +573,20 @@ export default function ServiceAreasClient({
               <div className="absolute bottom-[-1px] left-0 right-0 h-[2px] bg-[#0ea5e9]" />
             )}
           </button>
+
+          <button
+            onClick={() => { setActiveTab('pricing'); setSelectedArea(null); setIsCreatingNew(false); }}
+            className={cn(
+              'flex items-center gap-2 pb-3 text-[13px] font-medium transition-colors relative',
+              activeTab === 'pricing' ? 'text-[#0ea5e9]' : 'text-slate-600 hover:text-slate-900'
+            )}
+          >
+            <CircleDollarSign className="h-4 w-4" />
+            Pricing
+            {activeTab === 'pricing' && (
+              <div className="absolute bottom-[-1px] left-0 right-0 h-[2px] bg-[#0ea5e9]" />
+            )}
+          </button>
           
           <button
             onClick={() => { setActiveTab('areas'); setSelectedArea(null); setIsCreatingNew(false); }}
@@ -614,11 +626,8 @@ export default function ServiceAreasClient({
                 You can setup your service area and use this to limit booking outside of your active service area
               </p>
               <div className="mb-6 rounded-lg border border-sky-100 bg-sky-50 px-4 py-3 text-[13px] text-slate-700 leading-relaxed max-w-3xl">
-                This blue circle is the <span className="font-semibold">base</span>. The radius can be any value (5, 7, 9 miles, and so on).
-                Use <button type="button" onClick={() => { setPricingView('inside'); document.getElementById('service-area-pricing')?.scrollIntoView({ behavior: 'smooth' }); }} className="font-semibold text-[#0ea5e9] underline underline-offset-2">Table 1</button> for jobs fully inside the circle (pickup + drop-off).
-                Use <button type="button" onClick={() => { setPricingView('base_route'); document.getElementById('service-area-pricing')?.scrollIntoView({ behavior: 'smooth' }); }} className="font-semibold text-[#0ea5e9] underline underline-offset-2">Table 2</button> for <span className="font-semibold">base + pickup + drop-off</span> with the radius as free deadhead:
-                2 miles to pickup + 5 miles pickup to drop = 7 miles, and 7 is under a 9-mile area, so that trip is £0.
-                Miles beyond the radius are charged (for example 16 raw miles − 9 free = 7 billed miles).
+                This blue circle is the <span className="font-semibold">base</span>. Open the <button type="button" onClick={() => setActiveTab('pricing')} className="font-semibold text-[#0ea5e9] underline underline-offset-2">Pricing</button> tab to edit both fare tables.
+                Table 1 is pickup + drop-off inside the circle. Table 2 is base + pickup + drop-off with the radius as free deadhead.
               </div>
 
               <label className="flex items-center gap-2 mb-6 cursor-pointer w-fit">
@@ -691,73 +700,52 @@ export default function ServiceAreasClient({
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" /></svg>
                 </button>
               </div>
+            </div>
+          )}
 
-              <div id="service-area-pricing" className="mt-10">
-                <div className="flex items-center gap-6 border-b border-slate-200 mb-2">
-                  <button
-                    type="button"
-                    onClick={() => setPricingView('inside')}
-                    className={cn(
-                      'pb-3 text-[14px] font-semibold transition-colors relative',
-                      pricingView === 'inside' ? 'text-[#0ea5e9]' : 'text-slate-500 hover:text-slate-800'
-                    )}
-                  >
-                    Table 1 · Inside circle
-                    {pricingView === 'inside' && (
-                      <div className="absolute bottom-[-1px] left-0 right-0 h-[2px] bg-[#0ea5e9]" />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPricingView('base_route')}
-                    className={cn(
-                      'pb-3 text-[14px] font-semibold transition-colors relative',
-                      pricingView === 'base_route' ? 'text-[#0ea5e9]' : 'text-slate-500 hover:text-slate-800'
-                    )}
-                  >
-                    Table 2 · Base + pickup + drop-off
-                    {pricingView === 'base_route' && (
-                      <div className="absolute bottom-[-1px] left-0 right-0 h-[2px] bg-[#0ea5e9]" />
-                    )}
-                  </button>
-                </div>
-
-                {pricingView === 'inside' ? (
-                  <ServiceAreaPricingPanel
-                    kind="inside"
-                    initialPricingRule={initialPricingRule}
-                    serviceAreaId={baseAreaId}
-                    baseAddress={searchLocation}
-                    onToast={showToast}
-                    onBeforeSave={async () => {
-                      const miles = parseFloat(radiusInput);
-                      if (!isNaN(miles) && miles > 0) {
-                        setSelectedRadius(milesToMeters(miles));
-                        const result = await persistBaseCircle(miles);
-                        if (result.success && result.data) return result.data.id;
-                      }
-                      return baseAreaId;
-                    }}
-                  />
-                ) : (
-                  <ServiceAreaPricingPanel
-                    kind="base_route"
-                    initialPricingRule={initialBaseRoutePricing}
-                    serviceAreaId={baseAreaId}
-                    baseAddress={searchLocation}
-                    onToast={showToast}
-                    onBeforeSave={async () => {
-                      const miles = parseFloat(radiusInput);
-                      if (!isNaN(miles) && miles > 0) {
-                        setSelectedRadius(milesToMeters(miles));
-                        const result = await persistBaseCircle(miles);
-                        if (result.success && result.data) return result.data.id;
-                      }
-                      return baseAreaId;
-                    }}
-                  />
-                )}
+          {activeTab === 'pricing' && (
+            <div className="flex flex-col">
+              <h2 className="text-[22px] font-bold text-slate-800 tracking-tight">Service area pricing</h2>
+              <p className="text-[13px] text-slate-500 mb-6 max-w-3xl">
+                Two fare tables for this circle. Table 1 is used when pickup and drop-off are both inside.
+                Table 2 is base + pickup + drop-off, with the circle radius treated as free deadhead.
+              </p>
+              <ServiceAreaPricingPanel
+                kind="inside"
+                initialPricingRule={initialPricingRule}
+                serviceAreaId={baseAreaId}
+                baseAddress={searchLocation}
+                onToast={showToast}
+                onBeforeSave={async () => {
+                  const miles = parseFloat(radiusInput);
+                  if (!isNaN(miles) && miles > 0) {
+                    setSelectedRadius(milesToMeters(miles));
+                    const result = await persistBaseCircle(miles);
+                    if (result.success && result.data) return result.data.id;
+                  }
+                  return baseAreaId;
+                }}
+              />
+              <div className="mt-4 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-slate-700 leading-relaxed">
+                <span className="font-semibold">Table 2 rule:</span> billed miles = (base → pickup) + (pickup → drop-off) − radius.
+                Example: 2 + 5 = 7 miles inside a 9-mile area → £0. If raw miles are 16, billed miles = 7.
               </div>
+              <ServiceAreaPricingPanel
+                kind="base_route"
+                initialPricingRule={initialBaseRoutePricing}
+                serviceAreaId={baseAreaId}
+                baseAddress={searchLocation}
+                onToast={showToast}
+                onBeforeSave={async () => {
+                  const miles = parseFloat(radiusInput);
+                  if (!isNaN(miles) && miles > 0) {
+                    setSelectedRadius(milesToMeters(miles));
+                    const result = await persistBaseCircle(miles);
+                    if (result.success && result.data) return result.data.id;
+                  }
+                  return baseAreaId;
+                }}
+              />
             </div>
           )}
 

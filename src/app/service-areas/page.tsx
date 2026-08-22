@@ -21,7 +21,12 @@ export default async function ServiceAreasPage() {
   ]);
 
   const baseArea = findBaseServiceArea(areas);
-  const baseRouteRows = await getServiceAreaBasePricing(baseArea?.id ?? null);
+  let baseRouteRows: Record<string, unknown>[] = [];
+  try {
+    baseRouteRows = await getServiceAreaBasePricing(baseArea?.id ?? null);
+  } catch (err) {
+    console.error('Failed to load service_area_base_pricing (table may not exist yet):', err);
+  }
   const serviceAreaRule = findPricingRuleForServiceArea(pricingRules, baseArea?.id);
   const mainRule = findMainPricingRule(pricingRules);
   const seedRule = serviceAreaRule
