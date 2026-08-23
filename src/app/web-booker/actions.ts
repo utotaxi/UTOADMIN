@@ -85,15 +85,15 @@ export async function createWebBooking(data: any) {
       geocodeAddress(data.dropoffAddress),
     ]);
 
-    // 3. Price the trip from the service-area fare table. The fare shown in the
-    //    form is only a preview — this server-side quote is the authoritative
-    //    price that is stored and cross-posted, so a client-supplied price is
-    //    never accepted. A missing pricing rule / quote failure blocks the
-    //    booking so no priced-but-unpriced ride can slip through.
+    // 3. Scheduled web-booker jobs always use Table 2 (base + pickup + drop-off,
+    //    radius is free deadhead). The fare shown in the form is only a preview —
+    //    this server-side quote is the authoritative price that is stored and
+    //    cross-posted, so a client-supplied price is never accepted.
     const quote = await calcWebQuote({
       pickup: { lat: pickupGeo.lat, lng: pickupGeo.lon },
       dropoff: { lat: dropoffGeo.lat, lng: dropoffGeo.lon },
       vehicleType: data.vehicleType || 'economy',
+      pricingTable: 'base_route',
     });
     if (!quote.success) {
       return { success: false, error: PRICING_UNAVAILABLE };
@@ -216,7 +216,7 @@ export async function createWebBooking(data: any) {
 }
 
 /**
- * Quote the trip from the service-area fare table once pickup + dropoff are
+ * Quote the trip from Table 2 (scheduled / base-route) once pickup + dropoff are
  * entered, so the form can show the live fare (read-only) before submission.
  * The price shown here is only a preview; createWebBooking re-quotes on the
  * server so the stored/cross-posted price is always authoritative.
@@ -245,6 +245,7 @@ export async function quoteForWebBooking(
       pickup: { lat: pickupGeo.lat, lng: pickupGeo.lon },
       dropoff: { lat: dropoffGeo.lat, lng: dropoffGeo.lon },
       vehicleType: vehicleType ?? null,
+      pricingTable: 'base_route',
     });
 
     if (!result.success) return { success: false, error: PRICING_UNAVAILABLE };

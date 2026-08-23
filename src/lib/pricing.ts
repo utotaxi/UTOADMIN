@@ -184,14 +184,23 @@ export type RouteLeg = {
   miles: number;
 };
 
+export type PricingTableKind = 'auto' | 'inside' | 'base_route';
+
+export function forcedRouteMode(pricingTable?: PricingTableKind | null): RouteMode | undefined {
+  if (pricingTable === 'base_route') return 'outside_base_pickup_dropoff';
+  if (pricingTable === 'inside') return 'inside_pickup_dropoff';
+  return undefined;
+}
+
 export function billedRoute(params: {
   pickup: LatLng;
   dropoff: LatLng;
   center: LatLng | null;
   radiusMiles: number;
+  forceMode?: RouteMode;
 }): { miles: number; raw_miles: number; free_miles: number; mode: RouteMode; legs: RouteLeg[] } {
   const { pickup, dropoff, center, radiusMiles } = params;
-  const mode = resolveRouteMode(pickup, dropoff, center, radiusMiles);
+  const mode = params.forceMode ?? resolveRouteMode(pickup, dropoff, center, radiusMiles);
   const pickupToDropoff = haversineMiles(pickup, dropoff);
 
   if (mode === 'inside_pickup_dropoff') {

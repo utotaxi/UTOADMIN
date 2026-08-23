@@ -35,14 +35,14 @@ const COPY: Record<
   inside: {
     title: 'Service area pricing',
     description:
-      'Use this table when pickup and drop-off are both inside the blue circle. The fare is pickup → drop-off only.',
+      'Used for ASAP / on-demand rides when pickup and drop-off are both inside the blue circle. The fare is pickup → drop-off only.',
     saveLabel: 'Save pricing',
     savedLabel: 'Service area pricing saved.',
   },
   base_route: {
     title: 'Base + pickup + drop-off pricing',
     description:
-      'Use this table for base → pickup → drop-off. The service-area radius is free deadhead. Only miles beyond that radius are charged. Example: 9-mile area, 2 miles base → pickup + 5 miles pickup → drop-off = 7 raw miles, which is under 9, so fare is £0. If raw miles are 16, billed miles = 16 − 9 = 7.',
+      'Used for scheduled rides from the web booker and the app. Charge base → pickup → drop-off. The service-area radius is free deadhead. Only miles beyond that radius are charged. Example: 9-mile area, 2 miles base → pickup + 5 miles pickup → drop-off = 7 raw miles, which is under 9, so fare is £0. If raw miles are 16, billed miles = 16 − 9 = 7.',
     saveLabel: 'Save base-route pricing',
     savedLabel: 'Base + pickup + drop-off pricing saved.',
   },

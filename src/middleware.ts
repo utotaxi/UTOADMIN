@@ -43,8 +43,9 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isForgotPassword = pathname === "/login/forgot-password";
   const isLogin = pathname === "/login";
+  const isPublicQuoteApi = pathname === "/api/quote";
 
-  const isPublicRoute = isLogin || isForgotPassword;
+  const isPublicRoute = isLogin || isForgotPassword || isPublicQuoteApi;
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();

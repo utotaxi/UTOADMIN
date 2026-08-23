@@ -614,7 +614,7 @@ export default function ServiceAreasClient({
               </p>
               <div className="mb-6 rounded-lg border border-sky-100 bg-sky-50 px-4 py-3 text-[13px] text-slate-700 leading-relaxed">
                 This blue circle is the <span className="font-semibold">base</span>. Both fare tables are on this page.
-                Table 1 is pickup + drop-off inside the circle. Table 2 is base + pickup + drop-off with the radius as free deadhead.
+                Table 1 is ASAP pickup + drop-off inside the circle. Table 2 is scheduled rides (web booker and the app) — base + pickup + drop-off with the radius as free deadhead.
               </div>
 
               <label className="flex items-center gap-2 mb-6 cursor-pointer w-fit">
