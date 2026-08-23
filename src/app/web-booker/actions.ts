@@ -36,7 +36,7 @@ function parseUKTime(datetimeLocalValue: string | null): string | null {
 }
 
 /** Blocking message shown when the fare table has no rule / pricing fails. */
-export const PRICING_UNAVAILABLE = "Pricing unavailable — contact dispatch";
+const PRICING_UNAVAILABLE = "Pricing unavailable — contact dispatch";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function createWebBooking(data: any) {
