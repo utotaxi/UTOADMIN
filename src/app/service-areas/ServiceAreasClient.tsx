@@ -681,34 +681,15 @@ export default function ServiceAreasClient({
                 </div>
               )}
 
-              <div className="mt-6 rounded-lg border-2 border-amber-300 bg-amber-50/40 p-5">
-                <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-amber-700">Table 2 · Base + pickup + drop-off</div>
-                <div className="mb-4 text-[13px] text-slate-700 leading-relaxed">
-                  The circle radius is free deadhead. Example: 2 miles to pickup + 5 miles pickup to drop = 7 miles.
-                  Inside a 9-mile area that is £0. Miles beyond the radius are charged.
-                </div>
-                <PanelErrorBoundary fallback={<p className="text-sm text-red-600">Table 2 failed to load. Refresh the page.</p>}>
-                  <ServiceAreaPricingPanel
-                    kind="base_route"
-                    initialPricingRule={initialBaseRoutePricing}
-                    serviceAreaId={baseAreaId}
-                    baseAddress={searchLocation}
-                    onToast={showToast}
-                    onBeforeSave={async () => {
-                      const miles = parseFloat(radiusInput);
-                      if (!isNaN(miles) && miles > 0) {
-                        setSelectedRadius(milesToMeters(miles));
-                        const result = await persistBaseCircle(miles);
-                        if (result.success && result.data) return result.data.id;
-                      }
-                      return baseAreaId;
-                    }}
-                  />
-                </PanelErrorBoundary>
+              <div className="border border-slate-200 mt-2 relative h-[380px] shrink-0">
+                <div ref={mapContainerRef} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }} />
+                <button className="absolute top-2 right-2 bg-white p-1.5 rounded shadow border border-slate-200 text-slate-700 hover:bg-slate-50" style={{ zIndex: 1000 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" /></svg>
+                </button>
               </div>
 
-              <div className="mt-6 rounded-lg border border-slate-200 p-5">
-                <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-[#0ea5e9]">Table 1 · Inside circle</div>
+              <div className="mt-8 rounded-lg border border-slate-200 p-5">
+                <div className="mb-1 text-[12px] font-bold uppercase tracking-wider text-[#0ea5e9]">Table 1 · Inside circle</div>
                 <PanelErrorBoundary fallback={<p className="text-sm text-red-600">Table 1 failed to load. Refresh the page.</p>}>
                   <ServiceAreaPricingPanel
                     kind="inside"
@@ -729,11 +710,30 @@ export default function ServiceAreasClient({
                 </PanelErrorBoundary>
               </div>
 
-              <div className="border border-slate-200 mt-8 relative h-[380px] shrink-0">
-                <div ref={mapContainerRef} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }} />
-                <button className="absolute top-2 right-2 bg-white p-1.5 rounded shadow border border-slate-200 text-slate-700 hover:bg-slate-50" style={{ zIndex: 1000 }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" /></svg>
-                </button>
+              <div className="mt-6 mb-10 rounded-lg border-2 border-amber-400 bg-amber-50 p-5">
+                <div className="mb-1 text-[12px] font-bold uppercase tracking-wider text-amber-800">Table 2 · Base + pickup + drop-off</div>
+                <p className="mb-4 text-[13px] text-slate-700 leading-relaxed">
+                  This table is directly under Table 1. The circle radius is free deadhead.
+                  Example: 2 miles to pickup + 5 miles pickup to drop = 7 miles. Inside a 9-mile area that is £0.
+                </p>
+                <PanelErrorBoundary fallback={<p className="text-sm text-red-600">Table 2 failed to load. Refresh the page.</p>}>
+                  <ServiceAreaPricingPanel
+                    kind="base_route"
+                    initialPricingRule={initialBaseRoutePricing}
+                    serviceAreaId={baseAreaId}
+                    baseAddress={searchLocation}
+                    onToast={showToast}
+                    onBeforeSave={async () => {
+                      const miles = parseFloat(radiusInput);
+                      if (!isNaN(miles) && miles > 0) {
+                        setSelectedRadius(milesToMeters(miles));
+                        const result = await persistBaseCircle(miles);
+                        if (result.success && result.data) return result.data.id;
+                      }
+                      return baseAreaId;
+                    }}
+                  />
+                </PanelErrorBoundary>
               </div>
             </div>
           )}
