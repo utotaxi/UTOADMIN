@@ -7,6 +7,10 @@ import { NextResponse, type NextRequest } from "next/server";
  * If they ARE authenticated and visit /login, they are redirected to /.
  */
 export async function middleware(request: NextRequest) {
+  if (request.nextUrl.pathname === "/api/health") {
+    return NextResponse.json({ ok: true }, { status: 200 });
+  }
+
   let supabaseResponse = NextResponse.next({
     request,
   });
