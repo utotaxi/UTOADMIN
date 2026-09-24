@@ -24,20 +24,64 @@ export default async function WebBookingDetailsPage({ params }: { params: Promis
         .eq('id', bookingId)
         .single();
 
+    let bookingRecord = booking;
+
     if (bookingError || !booking) {
-        console.error("Booking not found:", bookingError);
-        return notFound();
-    }
-
-    let enriched = { ...booking };
-
-    // App scheduled rides: prefer passenger details stored on later_bookings
-    // (name/email/phone), because rider_id may point at a different users row.
-    if (booking.later_booking_id) {
         const { data: later } = await supabaseAdmin
             .from('later_bookings')
             .select('*')
-            .eq('id', booking.later_booking_id)
+            .eq('id', bookingId)
+            .maybeSingle();
+
+        if (!later) {
+            console.error("Booking not found:", bookingError);
+            return notFound();
+        }
+
+        const laterName =
+            nonEmpty(later.name) ||
+            [nonEmpty(later.first_name), nonEmpty(later.last_name)].filter(Boolean).join(' ') ||
+            null;
+
+        bookingRecord = {
+            id: later.id,
+            later_booking_id: later.id,
+            reference: later.reference || null,
+            rider_id: later.rider_id || null,
+            status: later.status || 'scheduled',
+            vehicle_type: later.vehicle_type || 'economy',
+            pickup_address: later.pickup_address,
+            dropoff_address: later.dropoff_address,
+            estimated_price: resolveLaterLegFare(later, 'single'),
+            scheduled_time: later.pickup_at || null,
+            assigned_driver_id: later.driver_id || null,
+            assigned_driver_name: later.assigned_driver_name || null,
+            booking_note: [
+                laterName ? `Passenger: ${laterName}` : null,
+                later.email ? `Email: ${later.email}` : null,
+                later.phone_number ? `Phone: ${later.phone_number}` : null,
+            ].filter(Boolean).join('\n'),
+            users: {
+                full_name: laterName,
+                email: nonEmpty(later.email),
+                phone: nonEmpty(later.phone_number),
+            },
+            passenger_name: laterName,
+            passenger_email: nonEmpty(later.email),
+            passenger_phone: nonEmpty(later.phone_number),
+            is_original_later_booking: true,
+        };
+    }
+
+    let enriched = { ...bookingRecord };
+
+    // App scheduled rides: prefer passenger details stored on later_bookings
+    // (name/email/phone), because rider_id may point at a different users row.
+    if (bookingRecord?.later_booking_id && !bookingRecord.is_original_later_booking) {
+        const { data: later } = await supabaseAdmin
+            .from('later_bookings')
+            .select('*')
+            .eq('id', bookingRecord.later_booking_id)
             .maybeSingle();
 
         if (later) {
@@ -61,9 +105,9 @@ export default async function WebBookingDetailsPage({ params }: { params: Promis
                 passenger_email: laterEmail,
                 passenger_phone: laterPhone,
                 users: {
-                    full_name: laterName || booking.users?.full_name || null,
-                    email: laterEmail || booking.users?.email || null,
-                    phone: laterPhone || booking.users?.phone || null,
+                    full_name: laterName || bookingRecord.users?.full_name || null,
+                    email: laterEmail || bookingRecord.users?.email || null,
+                    phone: laterPhone || bookingRecord.users?.phone || null,
                 },
             };
         }

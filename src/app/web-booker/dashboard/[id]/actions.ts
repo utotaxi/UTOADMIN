@@ -13,6 +13,27 @@ export async function updateBookingAction(id: string, updateData: Record<string,
 
     if (existingError) throw new Error(existingError.message);
 
+    if (!existing) {
+        const laterUpdate: Record<string, unknown> = {};
+        if (updateData.pickup_address !== undefined) laterUpdate.pickup_address = updateData.pickup_address;
+        if (updateData.dropoff_address !== undefined) laterUpdate.dropoff_address = updateData.dropoff_address;
+        if (updateData.estimated_price !== undefined) laterUpdate.estimated_fare = updateData.estimated_price;
+        if (updateData.scheduled_time !== undefined) laterUpdate.pickup_at = updateData.scheduled_time;
+        if (updateData.status !== undefined) laterUpdate.status = updateData.status;
+        if (updateData.booking_note !== undefined) laterUpdate.booking_note = updateData.booking_note;
+
+        const { error: laterOnlyError } = await supabaseAdmin
+            .from('later_bookings')
+            .update(laterUpdate)
+            .eq('id', id);
+        if (laterOnlyError) throw new Error(laterOnlyError.message);
+
+        revalidatePath(`/web-booker/dashboard/${id}`);
+        revalidatePath('/web-booker/dashboard');
+        revalidatePath('/scheduled-rides');
+        return;
+    }
+
     const { error } = await supabaseAdmin
         .from('web_booker')
         .update(updateData)

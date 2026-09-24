@@ -12,6 +12,8 @@ import {
     Pencil,
     ArrowRight,
     ArrowLeft,
+    ChevronUp,
+    ChevronDown,
 } from "lucide-react";
 import AssignDriverButton from "./AssignDriverButton";
 import EditLaterBookingButton from "./EditLaterBookingButton";
@@ -144,7 +146,13 @@ function expandBookingToLegs(booking: any): any[] {
     return [outbound, ret];
 }
 
-export default async function ScheduledRidesPage() {
+export default async function ScheduledRidesPage({
+    searchParams,
+}: {
+    searchParams: Promise<{ date?: string }>;
+}) {
+    const { date: dateSort } = await searchParams;
+    const dateDescending = dateSort === 'desc';
     // Fetch app "Later" bookings (later_bookings has no FK constraints in schema)
     const { data: laterBookings, error } = await supabaseAdmin
         .from('later_bookings')
@@ -194,8 +202,13 @@ export default async function ScheduledRidesPage() {
         .order('pickup_at', { ascending: true });
     const normalizedLaterFresh = (laterBookingsFresh || laterBookings || []).map((b: any) => ({ ...b, source: 'later' }));
 
+    // A click used to insert a web_booker copy of an app booking. Hide those
+    // copies so the list keeps only the original later_bookings row.
+    const laterIds = new Set(normalizedLaterFresh.map((b: any) => b.id));
+    const visibleWeb = normalizedWeb.filter((b: any) => !b.later_booking_id || !laterIds.has(b.later_booking_id));
+
     // Combined feed of both sources.
-    const rawBookings = [...normalizedLaterFresh, ...normalizedWeb];
+    const rawBookings = [...normalizedLaterFresh, ...visibleWeb];
 
     // Collect rider/driver ids plus booking contact fields for name lookup.
     const riderIds = [...new Set((rawBookings || [])
@@ -313,9 +326,9 @@ export default async function ScheduledRidesPage() {
         .sort((a: any, b: any) => {
             const aTime = new Date(a.pickup_at || 0).getTime();
             const bTime = new Date(b.pickup_at || 0).getTime();
-            const safeATime = Number.isFinite(aTime) ? aTime : Number.MAX_SAFE_INTEGER;
-            const safeBTime = Number.isFinite(bTime) ? bTime : Number.MAX_SAFE_INTEGER;
-            return safeATime - safeBTime;
+            const safeATime = Number.isFinite(aTime) ? aTime : 0;
+            const safeBTime = Number.isFinite(bTime) ? bTime : 0;
+            return dateDescending ? safeBTime - safeATime : safeATime - safeBTime;
         });
 
     const getStatusBadge = (status: string) => {
@@ -438,7 +451,29 @@ export default async function ScheduledRidesPage() {
                                     <th scope="col" className="px-6 py-4 font-medium">Rider</th>
                                     <th scope="col" className="px-6 py-4 font-medium">Driver</th>
                                     <th scope="col" className="px-6 py-4 font-medium">Status</th>
-                                    <th scope="col" className="px-6 py-4 font-medium">Pickup Time</th>
+                                    <th scope="col" className="px-6 py-4 font-medium">
+                                        <span className="inline-flex items-center gap-1.5">
+                                            Pickup Time
+                                            <span className="inline-flex flex-col leading-none">
+                                                <Link
+                                                    href="/scheduled-rides?date=asc"
+                                                    aria-label="Oldest bookings first"
+                                                    title="Oldest first"
+                                                    className={dateDescending ? "text-slate-300 hover:text-slate-600" : "text-foreground"}
+                                                >
+                                                    <ChevronUp className="w-3.5 h-3.5" />
+                                                </Link>
+                                                <Link
+                                                    href="/scheduled-rides?date=desc"
+                                                    aria-label="Latest bookings first"
+                                                    title="Latest first"
+                                                    className={dateDescending ? "text-foreground" : "text-slate-300 hover:text-slate-600"}
+                                                >
+                                                    <ChevronDown className="w-3.5 h-3.5" />
+                                                </Link>
+                                            </span>
+                                        </span>
+                                    </th>
                                     <th scope="col" className="px-6 py-4 font-medium">Dropoff By</th>
                                     <th scope="col" className="px-6 py-4 font-medium">Booked On</th>
                                     <th scope="col" className="px-6 py-4 font-medium">Fare</th>

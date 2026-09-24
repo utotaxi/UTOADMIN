@@ -495,8 +495,9 @@ export async function manualAssignDriverToScheduled(
 }
 
 /**
- * Ensure an app later_booking has a mirrored web_booker row so admin can
- * Review / Edit it in the Web Booker dashboard.
+ * Open the original scheduled booking. Never inserts a second web_booker row.
+ * If a mirror already exists it is reused; otherwise the caller opens the
+ * later_bookings row itself.
  */
 export async function ensureLaterBookingInWebBooker(laterBookingId: string) {
   try {
@@ -542,7 +543,7 @@ export async function ensureLaterBookingInWebBooker(laterBookingId: string) {
 
     const { data: later, error: laterError } = await supabaseAdmin
       .from('later_bookings')
-      .select('*')
+      .select('id')
       .eq('id', laterBookingId)
       .maybeSingle();
 
@@ -550,59 +551,8 @@ export async function ensureLaterBookingInWebBooker(laterBookingId: string) {
       return { success: false, error: laterError?.message || 'Later booking not found.' };
     }
 
-    const reference = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const fare = resolveLaterLegFare(later, 'single');
-    const riderName = [later.first_name, later.last_name].filter(Boolean).join(' ').trim()
-      || later.name
-      || null;
-
-    const payload: Record<string, unknown> = {
-      later_booking_id: later.id,
-      reference,
-      rider_id: later.rider_id || null,
-      status: mapLaterStatusToWebBooker(later.status),
-      vehicle_type: later.vehicle_type || 'economy',
-      pickup_address: later.pickup_address,
-      pickup_latitude: later.pickup_latitude,
-      pickup_longitude: later.pickup_longitude,
-      dropoff_address: later.dropoff_address,
-      dropoff_latitude: later.dropoff_latitude,
-      dropoff_longitude: later.dropoff_longitude,
-      estimated_price: fare,
-      scheduled_time: later.pickup_at || null,
-      payment_method: later.payment_method || 'pay',
-      assigned_driver_id: later.driver_id || null,
-      assigned_driver_name: later.assigned_driver_name || null,
-      dispatch_mode: later.driver_id ? 'manual' : 'marketplace',
-      dispatch_note: later.assignment_note
-        || (riderName ? `Synced from app scheduled ride (${riderName}).` : 'Synced from app scheduled ride.'),
-      booking_note: [
-        riderName ? `Passenger: ${riderName}` : null,
-        later.email ? `Email: ${later.email}` : null,
-        later.phone_number ? `Phone: ${later.phone_number}` : null,
-        later.flight_number ? `Flight: ${later.flight_number}` : null,
-      ].filter(Boolean).join('\n') || 'Opened from Scheduled Rides for admin review.',
-    };
-
-    const { data: created, error: createError } = await supabaseAdmin
-      .from('web_booker')
-      .insert(payload)
-      .select('id')
-      .single();
-
-    if (createError || !created) {
-      // Column may not exist yet — tell admin to run SQL.
-      if (/later_booking_id/i.test(createError?.message || '')) {
-        return {
-          success: false,
-          error: 'Missing later_booking_id on web_booker. Run sql/later_bookings_assignment_columns.sql in Supabase first.',
-        };
-      }
-      return { success: false, error: createError?.message || 'Failed to create web booker mirror.' };
-    }
-
-    revalidatePath('/web-booker/dashboard');
-    return { success: true, webBookerId: created.id };
+    // Open the original later booking. Do not insert a web_booker copy.
+    return { success: true, webBookerId: later.id };
   } catch (err: any) {
     console.error('[ensureLaterBookingInWebBooker] Error:', err);
     return { success: false, error: err.message };
