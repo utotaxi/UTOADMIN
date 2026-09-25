@@ -57,7 +57,7 @@ interface RideData {
     document_phvl_expiry?: string;
     user?: { full_name: string; phone?: string; email?: string } | null;
   } | null;
-  payments?: { payment_method: string; status: string }[] | null;
+  payments?: { payment_method: string; status: string; amount?: number }[] | null;
 }
 
 // Returns the best available timestamp for a ride
@@ -617,8 +617,14 @@ export default function RidesClient({ rides }: { rides: RideData[] }) {
                   const display = getDisplayStatus(ride.status);
                   const isSelected = selectedIds.has(ride.id);
                   const ts = getRideTimestamp(ride);
-                  const amount = ride.status === 'cancelled'
-                    ? (ride.final_price || 0)
+                  const paymentRows = ride.payments || [];
+                  const settled = paymentRows.filter((p) =>
+                    ['succeeded', 'completed', 'paid', 'card_charged'].includes((p.status || '').toLowerCase())
+                  );
+                  const paymentAmount = (settled.length ? settled : paymentRows)
+                    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+                  const amount = paymentAmount > 0
+                    ? paymentAmount
                     : (ride.final_price || ride.estimated_price || 0);
                   const rawPaymentMethod = ride.payment_method || (ride as any).payments?.[0]?.payment_method;
                   const paymentLabel = rawPaymentMethod === 'card' ? 'Card' : rawPaymentMethod === 'cash' || rawPaymentMethod === 'pay' ? 'Cash' : (rawPaymentMethod || '—');

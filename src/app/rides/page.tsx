@@ -36,7 +36,7 @@ export default async function RidesPage() {
                 *,
                 rider:rider_id(full_name, phone, email),
                 driver:driver_id(*, user:user_id(full_name, phone, email)),
-                payments(payment_method, status)
+                payments(payment_method, status, amount)
             `)
             .order('requested_at', { ascending: false })
             .limit(1000),

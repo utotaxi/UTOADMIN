@@ -13,7 +13,7 @@ export async function fetchSingleRideAction(rideId: string) {
           *,
           rider:rider_id(full_name, phone, email),
           driver:driver_id(*, user:user_id(full_name, phone, email)),
-          payments(payment_method, status)
+          payments(payment_method, status, amount)
       `)
       .eq('id', rideId)
       .single();
