@@ -1,12 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import {
     Car,
-    CarTaxiFront,
     ChevronLeft,
-    MapPin,
     Clock,
     FileCheck,
-    Ban,
     PoundSterling,
     TrendingUp,
     TrendingDown
@@ -28,32 +25,11 @@ import {
     sumPenaltyAmounts,
     computeDriverNetEarnings,
 } from "@/lib/driver-penalty-income";
-import { formatUkDateShort, formatUkTime } from "@/lib/uk-datetime";
 
 export const dynamic = "force-dynamic";
 
 // Staleness threshold — same as cleanup route
 const STALE_THRESHOLD_MINUTES = 2;
-
-// Formats a cancellation reason as "who cancelled" + any extra detail recorded.
-function formatCancelledBy(raw?: string | null): string {
-    const r = (raw || "").toLowerCase();
-    let who: string;
-    if (r.includes("no show") || r.includes("no-show") || r.includes("noshow") || r.includes("did not show") || r.includes("didn't show")) {
-        who = "Cancelled due to no show";
-    } else if (r.includes("driver")) {
-        who = "Cancelled by driver";
-    } else if (r.includes("rider") || r.includes("passenger") || r.includes("customer") || r.includes("user")) {
-        who = "Cancelled by passenger";
-    } else {
-        who = "Cancelled";
-    }
-    const detail = (raw || "").trim();
-    if (detail && detail.toLowerCase() !== who.toLowerCase()) {
-        return `${who} — ${detail}`;
-    }
-    return who;
-}
 
 export default async function DriverDetailsPage({ params }: { params: Promise<{ id: string }> }) {
     const resolvedParams = await params;
@@ -78,14 +54,6 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
         console.error("Driver not found:", driverError);
         return notFound();
     }
-
-    // Fetch recent rides they drove
-    const { data: rides, error: ridesError } = await supabaseAdmin
-        .from('rides')
-        .select('*, rider:rider_id(*)')
-        .eq('driver_id', driverId)
-        .order('requested_at', { ascending: false })
-        .limit(10);
 
     // Fetch ALL rides for this driver (to get ride IDs for payment lookup).
     // `*` pulls every available column (cancellation_reason, cancelled_at, etc.).
@@ -350,67 +318,6 @@ export default async function DriverDetailsPage({ params }: { params: Promise<{ 
                         driverId={driverId}
                         deductions={JSON.parse(JSON.stringify(deductions))}
                     />
-
-                    {/* Recent Driving History */}
-                    <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6 glass flex flex-col min-h-[300px]">
-                        <h3 className="font-semibold text-lg mb-4">Recent Driving History</h3>
-
-                        <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-4">
-                            {rides && rides.length > 0 ? (
-                                rides.map((ride: any) => {
-                                    const cancelled = isCancelledStatus(ride.status);
-                                    const cancelAmount = cancelled ? computeCancellationAmount(ride) : 0;
-                                    const displayAmount = cancelled
-                                        ? cancelAmount
-                                        : (ride.final_price || ride.estimated_price || 0);
-                                    const isDebit = cancelled && cancelAmount < 0;
-                                    return (
-                                    <div key={ride.id} className="p-4 rounded-lg border bg-slate-50/50 dark:bg-slate-900/50 flex flex-col sm:flex-row gap-4 justify-between sm:items-center">
-                                        <div className="flex flex-col flex-1 max-w-[280px]">
-                                            <span className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                                                <Clock className="w-3 h-3" /> {ride.requested_at ? `${formatUkDateShort(ride.requested_at)} - ${formatUkTime(ride.requested_at)}` : ''}
-                                            </span>
-                                            <div className="flex items-start gap-2 text-sm mb-1.5">
-                                                <MapPin className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
-                                                <span className="truncate" title={ride.pickup_address}>{ride.pickup_address}</span>
-                                            </div>
-                                            <div className="flex items-start gap-2 text-sm">
-                                                <MapPin className="w-4 h-4 text-rose-500 mt-0.5 flex-shrink-0" />
-                                                <span className="truncate" title={ride.dropoff_address}>{ride.dropoff_address}</span>
-                                            </div>
-                                            {cancelled && (
-                                                <div className="flex items-start gap-1.5 mt-2 text-[11px] text-rose-600 dark:text-rose-400 font-semibold">
-                                                    <Ban className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                                                    <span>{formatCancelledBy(ride.cancellation_reason)}</span>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="flex flex-col sm:items-end gap-1">
-                                            <span className="text-xs text-muted-foreground">Rider: {ride.rider?.full_name || 'Unknown'}</span>
-                                            <span className={`font-bold text-lg ${isDebit ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                                                {isDebit ? '-' : '+'}£{Math.abs(displayAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                            </span>
-                                            {cancelled && (
-                                                <span className="text-[10px] text-muted-foreground">
-                                                    {isDebit ? 'Cancellation fee (50%)' : 'Cancellation credit (100%)'}
-                                                </span>
-                                            )}
-                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${cancelled ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' : 'bg-slate-200 dark:bg-slate-800'}`}>
-                                                {ride.status}
-                                            </span>
-                                        </div>
-                                    </div>
-                                    );
-                                })
-                            ) : (
-                                <div className="h-full flex flex-col items-center justify-center text-muted-foreground flex-1">
-                                    <CarTaxiFront className="w-8 h-8 opacity-20 mb-3" />
-                                    <p>No driving history found.</p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>
