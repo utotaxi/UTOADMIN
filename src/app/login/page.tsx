@@ -2,35 +2,20 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { loginAction, signupAction } from "./actions";
-import { ShieldCheck, Lock, Mail, Eye, EyeOff, Loader2, CheckCircle2 } from "lucide-react";
+import { loginAction } from "./actions";
+import { ShieldCheck, Lock, Mail, Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function LoginPage() {
-  const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   async function handleSubmit(formData: FormData) {
     setError(null);
-    setSuccess(null);
     startTransition(async () => {
-      if (isSignUp) {
-        const result = await signupAction(formData);
-        if (result?.error) {
-          setError(result.error);
-        } else if (result?.success) {
-          setSuccess(result.message);
-          // Auto-switch to login so they can log in if they need to
-          setIsSignUp(false);
-          // Optional: clear form logic if needed
-        }
-      } else {
-        const result = await loginAction(formData);
-        if (result?.error) {
-          setError(result.error);
-        }
+      const result = await loginAction(formData);
+      if (result?.error) {
+        setError(result.error);
       }
     });
   }
@@ -65,7 +50,7 @@ export default function LoginPage() {
               UTO Admin
             </h1>
             <p className="text-slate-400 mt-2 text-sm">
-              {isSignUp ? "Create a new admin account" : "Sign in to access the admin panel"}
+              Sign in to access the admin panel
             </p>
           </div>
 
@@ -85,13 +70,6 @@ export default function LoginPage() {
               </div>
             )}
             
-            {success && (
-              <div className="mb-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-sm flex items-start gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-400" />
-                <span>{success}</span>
-              </div>
-            )}
-
             <form action={handleSubmit} className="space-y-5">
               {/* Email */}
               <div className="space-y-2">
@@ -139,7 +117,7 @@ export default function LoginPage() {
                     name="password"
                     type={showPassword ? "text" : "password"}
                     required
-                    autoComplete={isSignUp ? "new-password" : "current-password"}
+                    autoComplete="current-password"
                     placeholder="••••••••"
                     disabled={isPending}
                     className="w-full h-12 pl-11 pr-12 rounded-xl bg-white/[0.06] border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all duration-200 disabled:opacity-50 text-sm"
@@ -168,29 +146,15 @@ export default function LoginPage() {
                 {isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    {isSignUp ? "Creating account..." : "Signing in..."}
+                    Signing in...
                   </>
                 ) : (
-                  isSignUp ? "Create Account" : "Sign In"
+                  "Sign In"
                 )}
               </button>
             </form>
-            
-            {/* Toggle Sign Up / Sign In */}
-            <div className="mt-6 flex flex-col items-center gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSignUp(!isSignUp);
-                  setError(null);
-                  setSuccess(null);
-                }}
-                className="text-sm text-indigo-400 hover:text-indigo-300 transition-colors font-medium border-none bg-transparent outline-none cursor-pointer"
-              >
-                {isSignUp 
-                  ? "Already have an account? Sign in" 
-                  : "First time? Create your admin account"}
-              </button>
+
+            <div className="mt-6 text-center">
               <Link
                 href="/login/forgot-password"
                 className="text-xs text-slate-400 hover:text-indigo-300 transition-colors"
