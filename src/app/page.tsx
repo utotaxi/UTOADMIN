@@ -64,7 +64,9 @@ async function getDashboardStats(days: number = 7) {
   for (const booking of laterScheduleRows || []) {
     if (isFinishedScheduledStatus(booking.status)) continue;
     const outboundUpcoming = isUpcomingScheduledPickup(booking.pickup_at, booking.status, nowMs);
-    const returnUpcoming = Boolean(booking.is_round_trip)
+    // A return only counts when it has its own future time. A missing return
+    // time follows the outbound pickup, which is already counted above.
+    const returnUpcoming = Boolean(booking.is_round_trip && booking.return_at)
       && isUpcomingScheduledPickup(booking.return_at, booking.status, nowMs);
     if (outboundUpcoming || returnUpcoming) upcomingLaterIds.add(booking.id);
   }

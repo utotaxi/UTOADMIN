@@ -40,7 +40,7 @@ function historyLegsForBooking(booking: any): HistoryLeg[] {
             {
                 booking,
                 leg: 'return',
-                pickupAt: booking.return_at || null,
+                pickupAt: booking.return_at || booking.pickup_at || null,
                 pickupAddress: booking.return_pickup_address || booking.dropoff_address || null,
                 dropoffAddress: booking.return_dropoff_address || booking.pickup_address || null,
             },
