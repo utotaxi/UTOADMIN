@@ -24,6 +24,8 @@ import {
     resolveRiderId,
     resolveRiderName,
     resolveWebBookerFare,
+    isFinishedScheduledStatus,
+    isUpcomingScheduledPickup,
     toNum,
 } from "@/lib/scheduled-booking-utils";
 import { syncDeclinedLaterAssignments } from "./actions";
@@ -313,16 +315,17 @@ export default async function ScheduledRidesPage({
         };
     });
 
-    // Completed and cancelled rides are moved to "Rides & Trips" (history), so
-    // the Scheduled Rides page only lists active (upcoming / in-progress) rides.
+    // Completed, cancelled, and any pickup that is already in the past move to
+    // Rides & Trips. This page only lists legs still scheduled for the future.
     const activeBookings = (bookings || []).filter(
-        (b: any) => !['completed', 'cancelled', 'cancelled_no_drivers', 'expired'].includes(b.status)
+        (b: any) => !isFinishedScheduledStatus(b.status)
     );
 
     // Expand round-trip "later" bookings into separate onward + return legs,
-    // then order every leg by pickup date & time (earliest upcoming first).
+    // drop legs whose pickup time has passed, then order by pickup date & time.
     const tableLegs = activeBookings
         .flatMap((b: any) => expandBookingToLegs(b))
+        .filter((leg: any) => isUpcomingScheduledPickup(leg.pickup_at, leg.status))
         .sort((a: any, b: any) => {
             const aTime = new Date(a.pickup_at || 0).getTime();
             const bTime = new Date(b.pickup_at || 0).getTime();
@@ -390,16 +393,18 @@ export default async function ScheduledRidesPage({
         }
     };
 
-    const totalBookings = activeBookings.length;
-    const scheduledCount = activeBookings.filter((b: any) => b.status === 'scheduled').length;
-    const assignedCount = activeBookings.filter((b: any) => ['driver_assigned', 'driver_accepted'].includes(b.status)).length;
-    const inProgressCount = activeBookings.filter((b: any) => b.status === 'in_progress' || b.status === 'arrived' || b.status === 'started').length;
+    const upcomingBookingIds = new Set(tableLegs.map((leg: any) => leg.assignBookingId));
+    const upcomingBookings = activeBookings.filter((b: any) => upcomingBookingIds.has(b.id));
+    const totalBookings = upcomingBookings.length;
+    const scheduledCount = upcomingBookings.filter((b: any) => b.status === 'scheduled').length;
+    const assignedCount = upcomingBookings.filter((b: any) => ['driver_assigned', 'driver_accepted'].includes(b.status)).length;
+    const inProgressCount = upcomingBookings.filter((b: any) => b.status === 'in_progress' || b.status === 'arrived' || b.status === 'started').length;
 
     return (
         <div className="flex flex-col gap-8 w-full">
             <div className="flex flex-col gap-2">
                 <h1 className="text-3xl font-bold tracking-tight text-foreground">Scheduled Rides</h1>
-                <p className="text-muted-foreground">View and manage all pre-booked (&ldquo;Later&rdquo;) ride reservations.</p>
+                <p className="text-muted-foreground">View and manage upcoming pre-booked (&ldquo;Later&rdquo;) ride reservations.</p>
             </div>
 
             {/* Stats Cards */}
@@ -410,7 +415,7 @@ export default async function ScheduledRidesPage({
                         <CalendarClock className="h-4 w-4 text-muted-foreground" />
                     </div>
                     <div className="text-2xl font-bold">{totalBookings}</div>
-                    <p className="text-xs text-muted-foreground mt-1">All time scheduled rides</p>
+                    <p className="text-xs text-muted-foreground mt-1">Upcoming scheduled rides</p>
                 </div>
                 <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-5 glass hover:shadow-md transition-shadow">
                     <div className="flex items-center justify-between pb-2">

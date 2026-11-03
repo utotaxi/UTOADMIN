@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+import { isFinishedScheduledStatus, isUpcomingScheduledPickup } from "@/lib/scheduled-booking-utils";
 import { RevenueChart } from "./RevenueChart";
 import { DateFilter } from "./DateFilter";
 import { Suspense } from "react";
@@ -45,16 +46,32 @@ async function getDashboardStats(days: number = 7) {
     { count: totalUsers },
     { count: activeRides },
     { data: paymentsData },
-    { count: scheduledRides },
+    { data: laterScheduleRows },
+    { data: webScheduleRows },
     { data: deductionsData }
   ] = await Promise.all([
     supabaseAdmin.from('drivers').select('*', { count: 'exact', head: true }),
     supabaseAdmin.from('users').select('*', { count: 'exact', head: true }).eq('role', 'rider'),
     supabaseAdmin.from('rides').select('*', { count: 'exact', head: true }).in('status', ['accepted', 'started']),
     supabaseAdmin.from('payments').select('amount, status, created_at').eq('status', 'succeeded'),
-    supabaseAdmin.from('later_bookings').select('*', { count: 'exact', head: true }).in('status', ['scheduled', 'driver_accepted']),
+    supabaseAdmin.from('later_bookings').select('id, status, pickup_at, return_at, is_round_trip'),
+    supabaseAdmin.from('web_booker').select('id, status, scheduled_time'),
     supabaseAdmin.from('driver_deductions').select('amount')
   ]);
+
+  const nowMs = Date.now();
+  const upcomingLaterIds = new Set<string>();
+  for (const booking of laterScheduleRows || []) {
+    if (isFinishedScheduledStatus(booking.status)) continue;
+    const outboundUpcoming = isUpcomingScheduledPickup(booking.pickup_at, booking.status, nowMs);
+    const returnUpcoming = Boolean(booking.is_round_trip)
+      && isUpcomingScheduledPickup(booking.return_at, booking.status, nowMs);
+    if (outboundUpcoming || returnUpcoming) upcomingLaterIds.add(booking.id);
+  }
+  const upcomingWebCount = (webScheduleRows || []).filter((booking) =>
+    isUpcomingScheduledPickup(booking.scheduled_time, booking.status, nowMs)
+  ).length;
+  const scheduledRides = upcomingLaterIds.size + upcomingWebCount;
 
   // Handle revenue mapping specifically (Supabase JS doesn't have robust sum aggregate helper so we do it memory efficient for MVP)
   const grossRevenue = paymentsData?.reduce((acc, curr) => acc + (curr.amount || 0), 0) || 0;

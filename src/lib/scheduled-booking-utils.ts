@@ -217,6 +217,59 @@ export function resolveOriginalLaterFare(booking: BookingLike, leg: "single" | "
     return toNum(booking.estimated_fare);
 }
 
+/** Statuses that have left the upcoming schedule and belong in Rides & Trips. */
+export const FINISHED_SCHEDULED_STATUSES = [
+    "completed",
+    "cancelled",
+    "cancelled_no_drivers",
+    "expired",
+] as const;
+
+export function isFinishedScheduledStatus(status?: string | null): boolean {
+    return FINISHED_SCHEDULED_STATUSES.includes(
+        (status || "").toLowerCase() as (typeof FINISHED_SCHEDULED_STATUSES)[number]
+    );
+}
+
+function scheduledInstant(value: unknown): number | null {
+    if (value == null || value === "") return null;
+    const time = new Date(value as string).getTime();
+    return Number.isFinite(time) ? time : null;
+}
+
+/** True when a pickup moment is already in the past. A missing time is not past. */
+export function isPastScheduledInstant(value: unknown, now = Date.now()): boolean {
+    const time = scheduledInstant(value);
+    if (time == null) return false;
+    return time < now;
+}
+
+/**
+ * Scheduled Rides only keeps a leg whose pickup is still in the future
+ * and whose booking is not completed, cancelled, or expired.
+ * Undated unfinished bookings stay, so they can still be managed.
+ */
+export function isUpcomingScheduledPickup(
+    pickupAt: unknown,
+    status?: string | null,
+    now = Date.now()
+): boolean {
+    if (isFinishedScheduledStatus(status)) return false;
+    const time = scheduledInstant(pickupAt);
+    if (time == null) return true;
+    return time >= now;
+}
+
+/** Completed, cancelled, expired, or any status whose pickup time has passed. */
+export function shouldMoveScheduledLegToRides(
+    pickupAt: unknown,
+    status?: string | null,
+    now = Date.now()
+): boolean {
+    if (isFinishedScheduledStatus(status)) return true;
+    return isPastScheduledInstant(pickupAt, now);
+}
+
 export function hasLaterDiscount(booking: BookingLike): boolean {
     if (isCouponPayment(booking)) return true;
     const amountPaid = toNum(booking.amount_paid);
