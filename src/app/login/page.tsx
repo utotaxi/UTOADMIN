@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { loginAction } from "./actions";
 import { ShieldCheck, Lock, Mail, Eye, EyeOff, Loader2 } from "lucide-react";
@@ -23,7 +24,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex w-full">
       {/* Central Login Form Area */}
-      <div className="w-full flex items-center justify-center bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 relative overflow-hidden px-4 sm:px-6 lg:px-8">
+      <div className="w-full min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 relative overflow-y-auto px-4 py-10 sm:px-6 lg:px-8">
         {/* Background decorative elements */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="absolute -top-40 -right-40 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl animate-pulse" />
@@ -40,11 +41,18 @@ export default function LoginPage() {
           }}
         />
 
-        <div className="relative z-10 w-full max-w-md mx-auto">
+        <div className="relative z-10 w-full max-w-md mx-auto mb-6">
           {/* Logo / Header */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white text-2xl font-bold shadow-2xl shadow-indigo-500/25 mb-4">
-              U
+          <div className="text-center mb-6">
+            <div className="mx-auto mb-4 w-full max-w-[220px] rounded-2xl bg-white px-3 py-2 shadow-2xl shadow-indigo-500/20">
+              <Image
+                src="/uto-logo.png"
+                alt="UTO"
+                width={1024}
+                height={512}
+                priority
+                className="h-auto w-full"
+              />
             </div>
             <h1 className="text-3xl font-bold text-white tracking-tight">
               UTO Admin
@@ -165,7 +173,7 @@ export default function LoginPage() {
           </div>
 
           {/* Footer */}
-          <p className="text-center text-xs text-slate-600 mt-6">
+          <p className="text-center text-xs text-slate-400 mt-3">
             Access restricted to authorized administrators only.
           </p>
         </div>
