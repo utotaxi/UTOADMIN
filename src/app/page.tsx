@@ -213,16 +213,14 @@ export default async function Dashboard(props: { searchParams?: Promise<{ [key: 
         <StatCard
           title="Registered Drivers"
           value={stats.totalDrivers.toString()}
-          description="+4 new this week"
           icon={Car}
-          trend="up"
+          trend="neutral"
         />
         <StatCard
           title="Total Riders"
           value={stats.totalUsers.toString()}
-          description="+48 new this week"
           icon={Users}
-          trend="up"
+          trend="neutral"
         />
         <StatCard
           title="Scheduled Rides"
@@ -399,7 +397,7 @@ function StatCard({
 }: {
   title: string;
   value: string | number;
-  description: string;
+  description?: string;
   icon: any;
   trend: 'up' | 'down' | 'neutral';
 }) {
@@ -411,14 +409,16 @@ function StatCard({
       </div>
       <div>
         <div className="text-2xl font-bold">{value}</div>
-        <p className={cn(
-          "text-xs mt-1 font-medium",
-          trend === 'up' && "text-emerald-500",
-          trend === 'down' && "text-rose-500",
-          trend === 'neutral' && "text-muted-foreground"
-        )}>
-          {description}
-        </p>
+        {description ? (
+          <p className={cn(
+            "text-xs mt-1 font-medium",
+            trend === 'up' && "text-emerald-500",
+            trend === 'down' && "text-rose-500",
+            trend === 'neutral' && "text-muted-foreground"
+          )}>
+            {description}
+          </p>
+        ) : null}
       </div>
     </div>
   );
